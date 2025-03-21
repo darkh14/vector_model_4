@@ -1,0 +1,37 @@
+# /old
+# /keys
+# /models
+.env
+/.venv
+/.idea
+# bit-transcribe/.git_bak
+/.vscode
+/.devcontainer
+__pycache__/
+# /tasks
+# /data
+# # bit-transcribe/models_config
+# # models_data/
+# /tmp
+# /test_data
+# bit-text-processing/models/RUPunct_big
+# *.log
+# *.ckpt
+# *.nemo
+# *.wav
+# model_data.tar
+# comm.txt
+
+# launch.json
+# vosk-model-ru-0.42.zip
+# vosk-model-ru-0.42
+# docker-compose-example.yml
+# pytorch_model.bin
+# bit-transcribe-v2/models_data/models--gigaam--ctc/ctc_model_config.yaml
+# bit-transcribe-v2/models_data/models--gigaam--rnnt/rnnt_model_config.yaml
+# bit-transcribe-v2/models_data/models--pyannote--voice-activity-detection/refs
+# bit-transcribe-v2/temp
+# bit-transcribe-v2/models_data/models--pyannote--voice-activity-detection/snapshots
+# bit-transcribe-v2/models_data/tokenizer_all_sets
+# mongodb_data
+# mongodb_config
