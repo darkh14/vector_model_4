@@ -1,0 +1,35 @@
+x-common: &common
+  restart: unless-stopped
+  env_file: .env
+
+services:
+  bit-auth:
+    image: "registry.gitlab.com/labai1/bitnewton/bit-auth:${DOCKER_TAG:-local}"
+    build:
+      context: ./bit-auth
+    container_name: bit-auth-${DEPLOY_ENV:-local}
+    ports:
+      - "127.0.0.1:${BIT_AUTH_PORT:-9010}:8080"
+    <<: *common
+    depends_on:
+      - mongodb  
+  
+  mongodb:
+    image: mongo:6.0.21
+    container_name: bit-mongodb-${DEPLOY_ENV:-local}
+    <<: *common
+    environment:
+      - MONGO_DATA_DIR=/data-dev2/db
+      - MONGO_LOG_DIR=/dev-dev2/null
+      - MONGO_INITDB_ROOT_USERNAME=${DATABASE_USER:-admin}
+      - MONGO_INITDB_ROOT_PASSWORD=${DATABASE_PASSWORD:-123456}
+    volumes:
+      - ${MONGO_DATA_PATH:-.}/mongo/data:/data/db
+      - ${MONGO_DATA_PATH:-.}/mongo/config:/data/configdb
+    ports:
+      - "127.0.0.1:${MONGODB_PORT:-27017}:27017"
+
+networks:
+  default:
+    name: 1bitai
+    external: true
