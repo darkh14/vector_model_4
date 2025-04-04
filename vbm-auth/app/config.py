@@ -1,5 +1,7 @@
 from pydantic_settings import BaseSettings
 
+VERSION = '1.0.0.0'
+
 with open('email.txt', 'r', encoding='utf-8') as fp:
     EMAIL_TEXT = fp.read()
 

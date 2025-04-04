@@ -9,7 +9,9 @@ import secrets
 
 from entities import TokenRequest, TokenCheck, TokenData
 from config import settings
+from config import VERSION
 
+__version__ = VERSION
 
 # Настройка логирования
 logging.basicConfig(
@@ -65,8 +67,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="VBM Auth API",
     description="API для сервиса авторизации vbm-auth",
-    lifespan=lifespan
-    # version="1.0.0"
+    lifespan=lifespan,
+    version=VERSION
 )
 
 async def log_token_operation(db, email: str, operation: str, details: str):
