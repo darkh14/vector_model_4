@@ -3,33 +3,33 @@ x-common: &common
   env_file: .env
 
 services:
-  bit-auth:
-    image: "registry.gitlab.com/labai1/bitnewton/bit-auth:${DOCKER_TAG:-local}"
+  vbm-auth:
+    image: vbm-auth
     build:
-      context: ./bit-auth
-    container_name: bit-auth-${DEPLOY_ENV:-local}
+      context: ./vbm-auth
+      dockerfile: Dockerfile      
+    container_name: vbm-auth
     ports:
-      - "127.0.0.1:${BIT_AUTH_PORT:-9010}:8080"
+      - "127.0.0.1:9010:8080"
     <<: *common
     depends_on:
-      - mongodb  
-  
-  mongodb:
+      - vbm-mongodb
+
+  vbm-mongodb:
     image: mongo:6.0.21
-    container_name: bit-mongodb-${DEPLOY_ENV:-local}
-    <<: *common
+    container_name: vbm-mongodb
+    <<: *common    
     environment:
-      - MONGO_DATA_DIR=/data-dev2/db
-      - MONGO_LOG_DIR=/dev-dev2/null
-      - MONGO_INITDB_ROOT_USERNAME=${DATABASE_USER:-admin}
-      - MONGO_INITDB_ROOT_PASSWORD=${DATABASE_PASSWORD:-123456}
+      - MONGO_DATA_DIR=/data/db
+      - MONGO_LOG_DIR=/dev/null
+      - MONGO_INITDB_ROOT_USERNAME=${DATABASE_USR:-admin}
+      - MONGO_INITDB_ROOT_PASSWORD=${DATABASE_PASSWORD:-123456}      
     volumes:
-      - ${MONGO_DATA_PATH:-.}/mongo/data:/data/db
-      - ${MONGO_DATA_PATH:-.}/mongo/config:/data/configdb
+      - ./mongo/data:/data/db
+      - ./mongo/config:/data/configdb      
     ports:
-      - "127.0.0.1:${MONGODB_PORT:-27017}:27017"
+      - "127.0.0.1:27217:27017"
 
 networks:
   default:
-    name: 1bitai
-    external: true
+    name: vbm-network
