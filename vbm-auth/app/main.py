@@ -34,34 +34,39 @@ async def periodic_db_check(db):
 async def lifespan(app: FastAPI):
     """Инициализация подключения к базе данных при запуске"""
     try:
-        app.mongodb_client = AsyncIOMotorClient(
+        app.mongodb_client = AsyncIOMotorClient( # type: ignore
             settings.mongodb_url,
             serverSelectionTimeoutMS=5000
         )
-        app.mongodb = app.mongodb_client[settings.database_name]
+        app.mongodb = app.mongodb_client[settings.database_name] # type: ignore
         
         # Проверка подключения
-        await app.mongodb.command("ping")
+        await app.mongodb.command("ping") # type: ignore
         logger.info("Successfully connected to the database")
         
         # Проверка целостности базы данных
-        db_integrity = await check_database_integrity(app.mongodb)
+        db_integrity = await check_database_integrity(app.mongodb) # type: ignore
         if not db_integrity:
             logger.error("Database integrity check failed")
             raise Exception("Database integrity check failed")
         
         # Запуск фоновых задач
-        asyncio.create_task(periodic_db_check(app.mongodb))
+        asyncio.create_task(periodic_db_check(app.mongodb)) # type: ignore
         logger.info("Background tasks started")
-
-        yield 
-        
-        """Закрытие подключения к базе данных при остановке"""
-        app.mongodb_client.close()
-        logger.info("Database connection closed")
 
     except Exception as e:
         logger.error(f"Database startup error: {e}")
+        raise    
+
+        yield 
+        
+    try:
+        """Закрытие подключения к базе данных при остановке"""
+        app.mongodb_client.close() # type: ignore
+        logger.info("Database connection closed")
+
+    except Exception as e:
+        logger.error(f"Database shutdown error: {e}")
         raise
 
 app = FastAPI(
@@ -133,7 +138,7 @@ async def send_email(to_email: str, token: str):
 
 async def get_db():
     """Получение подключения к базе данных"""
-    yield app.mongodb
+    yield app.mongodb # type: ignore
 
 @app.get("/health")
 async def health():

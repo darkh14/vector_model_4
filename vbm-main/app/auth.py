@@ -1,16 +1,15 @@
 import aiohttp
 from fastapi import HTTPException, Header
-from config import TEST_MODE, AUTH_SERVICE_URL
-
+from config import settings
 
 async def check_token(token: str = Header()) -> bool:
 
-    if TEST_MODE:
+    if settings.TEST_MODE:
         return True
     
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.post(f"{AUTH_SERVICE_URL}/check-token", json={"token": token}, timeout=10) as response:
+            async with session.post(f"{settings.AUTH_SERVICE_URL}/check-token", json={"token": token}, timeout=10) as response:
                 if response.status == 200:
                     return True
                 elif response.status == 404:
