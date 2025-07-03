@@ -20,23 +20,28 @@ class Model:
 
     def __init__(self, model_id, parameters=None):
         self.model_id = model_id
-
         self.parameters = parameters.model_dump() if parameters else None
+        self.data_filter = None
+        self.ml_model = None
+        self.scaler = None
 
     async def initialize(self):
         if not self.parameters:
-            self.parameters = await self.read_model(self.model_id)
-        self.data_filter = self.parameters['data_filter']
+            await self.read_model()
 
+        if self.parameters:
+            self.data_filter = self.parameters.get('data_filter')
 
-    @staticmethod
-    async def read_model(model_id):
-        return db_processor.find_one('models', {'model_id': model_id})
-    
-    @staticmethod
-    async def write_model(model_id, model_data):
-        return db_processor.insert_one('models', model_data, {'model_id': model_id})
-    
+    async def read_model(self):
+        model_parameters = await db_processor.find_one('models', {'model_id': self.model_id})
+        if model_parameters is not None:
+            model_parameters['data_filter'] = pickle.loads(model_parameters['data_filter'])
+            self.parameters = model_parameters
+            model_binary = await db_processor.find_one('models_bin', {'model_id': self.model_id})
+            if model_binary:
+                self.ml_model = model_binary['model']
+                self.scaler = model_binary['scaler']
+
     async def fit(self, data_filter: Optional[dict] = None):
         
         logger.info("Reading data from db. Мodel id={}".format(self.model_id))
@@ -68,10 +73,35 @@ class Model:
     async def write_to_db(self):
 
         parameters_to_db = self.parameters.copy()
-        del parameters_to_db['data_filter']
+        parameters_to_db['data_filter'] = pickle.dumps(parameters_to_db['data_filter'])
         await db_processor.insert_one('models', parameters_to_db, {'model_id': self.model_id})
         bin_data = {'model_id': self.model_id, 'scaler': self.scaler.get_binary(), 'model': self.ml_model.get_binary()}
         await db_processor.insert_one('models_bin', bin_data, {'model_id': self.model_id})
+
+    async def get_info(self):
+
+        if not self.parameters:
+            return None
+        
+        result = {}
+        result['model_id'] = self.model_id
+        result['columns_descriptions'] = []
+        for k, v in self.parameters['columns_descriptions'].items():
+            descr = {'name': k, 
+                     'analytics': v['analytics'],
+                     'analytic_key': v['analytic_key'],
+                     'period_shift': v['period_shift']}
+            result['columns_descriptions'].append(descr)
+        return result
+
+    async def delete(self):
+        await db_processor.delete_many('models', {'model_id': self.model_id})
+        await db_processor.delete_many('models_bin', {'model_id': self.model_id})        
+
+        self.parameters = None
+        self.data_filter = None
+        self.ml_model = None
+        self.scaler = None
 
 
 class Scaler:
@@ -192,4 +222,4 @@ class NNModel(MlModel):
                 f.write(model_bin)   
                      
             self.nn = load_model(fp.name)
-            fp.close()
+            fp.close()      

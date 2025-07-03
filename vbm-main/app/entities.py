@@ -65,7 +65,16 @@ class RawqDataStr(BaseModel, extra='allow'):
     period: str
 
 
+class ColumnDescription(BaseModel):
+    name: str
+    analytics: dict
+    analytic_key: str
+    period_shift: int
 
+
+class ModelInfo(BaseModel):
+    model_id: str
+    columns_descriptions: list[ColumnDescription]
 
 # class LoadingDataResponse(BaseModel):
 #     loading_id: str

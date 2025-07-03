@@ -306,7 +306,7 @@ class RowToColumn(BaseEstimator, TransformerMixin):
             c_columns.append(column_name)
 
             self.columns_descriptions[column_name] = {'indicator_id': indicator_settings['id'], 
-                                                      'analytic_kinds': [],
+                                                      'analytics': {},
                                                       'analytic_key': '',
                                                       'period_shift': 0}
 
@@ -359,7 +359,7 @@ class RowToColumn(BaseEstimator, TransformerMixin):
             c_columns.append(column_name)
 
             self.columns_descriptions[column_name] = {'indicator_id': indicator_settings['id'], 
-                                                      'analytic_kinds': indicator_settings['analytics'],
+                                                      'analytics': self.analytic_key_settings[analytic_key],
                                                       'analytic_key': analytic_key,
                                                       'period_shift': 0}
         
@@ -384,11 +384,14 @@ class RowToColumn(BaseEstimator, TransformerMixin):
         analytic_kinds = [el['analytics'] for el in self.parameters['indicators'] if el['id']==indicator][0]
 
         vv = []
+        an_settings = {}
+
         if analytic_kinds:
 
             for an in analytic_kinds:
                 vv.append(an)
                 vv.append(row['{}_id'.format(an)])
+                an_settings[an] = row['{}_id'.format(an)]
 
             str_v = '_'.join(vv)
             result = str(uuid.uuid3(uuid.NAMESPACE_DNS, str_v))
@@ -396,7 +399,7 @@ class RowToColumn(BaseEstimator, TransformerMixin):
             result = ''
 
         if result not in self.analytic_key_settings:
-            self.analytic_key_settings[result] = vv
+            self.analytic_key_settings[result] = an_settings
 
         return result
 
