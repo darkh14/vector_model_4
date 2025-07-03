@@ -6,6 +6,7 @@
 /.vscode
 /.devcontainer
 __pycache__/
+vbm-main/data
 # /tasks
 # /data
 # # bit-transcribe/models_config
@@ -33,3 +34,4 @@ __pycache__/
 # bit-transcribe-v2/models_data/tokenizer_all_sets
 # mongodb_data
 # mongodb_config
+
