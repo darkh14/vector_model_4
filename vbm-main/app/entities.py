@@ -12,6 +12,12 @@ class TaskResponse(BaseModel):
     task_id: UUID4
     message: str
 
+class ProcessingTaskResponse(BaseModel):
+    task_id: str
+    type: str
+    accounting_db: str
+    status: str    
+
 
 class StatusResponse(BaseModel):
     status: str
@@ -41,6 +47,7 @@ class FittingParameters(BaseModel):
 
 class TaskData(BaseModel):
     task_id: str
+    type: str = 'FIT'
     status: str = "CREATED"
     start_time: Optional[float] = None
     end_time: Optional[float] = None

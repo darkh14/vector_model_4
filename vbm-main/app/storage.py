@@ -9,7 +9,7 @@ import time
 import os
 
 from config import SOURCE_FOLDER, TEMP_FOLDER
-from entities import TaskData, StatusResponse
+from entities import TaskData, StatusResponse, ProcessingTaskResponse
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,21 @@ class TaskStorage:
     async def get_task(self, task_id: str) -> Optional[TaskData]:
         """Получает данные задачи."""
         return self.tasks.get(task_id)
+    
+    async def get_processing_tasks(self, accounting_db: str='') -> List[ProcessingTaskResponse]:
+        """Получает данные всех задач."""
+        all_tasks = [el for el in self.tasks.values() if el.model_dump().get('status') not in ['READY', 'ERROR']]
+        if accounting_db:
+            all_tasks = [el for el in all_tasks if el.model_dump().get('accounting_db', '') == accounting_db]
+
+        result = []
+        for el in all_tasks:
+            result.append(ProcessingTaskResponse(task_id=el.task_id, 
+                                                 type=el.type, 
+                                                 accounting_db=el.model_dump().get('accounting_db', ''),
+                                                 status=el.status))
+
+        return result
 
     async def update_task(self, task_id: str, **kwargs) -> None:
         """Обновляет данные задачи."""

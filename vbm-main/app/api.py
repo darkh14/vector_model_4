@@ -7,7 +7,7 @@ from fastapi import APIRouter, Header, HTTPException, BackgroundTasks, File, Upl
 from typing import Optional, Annotated
 
 import config
-from entities import HealthResponse, TaskResponse, StatusResponse, FittingParameters
+from entities import HealthResponse, TaskResponse, StatusResponse, FittingParameters, ProcessingTaskResponse
 from storage import task_storage
 from data_processing import data_loader
 from models import Model
@@ -115,11 +115,11 @@ async def process_fitting_task(task_id: str, replace=False):
         # Выполняем загрузку
 
         model = Model(task.model_id, task.fitting_parameters)
-        model.initialize()
+        await model.initialize()
 
         result = await model.fit(task.fitting_parameters.data_filter)
 
-        logger.info(f"[{task_id}] uploading task completed")
+        logger.info(f"[{task_id}] fitting task completed")
 
         # Обновляем статус
         await task_storage.update_task(task_id, status="READY", progress=100)
@@ -128,7 +128,7 @@ async def process_fitting_task(task_id: str, replace=False):
 
     except Exception as e:
         logger.error(f"Error processing task {task_id}: {e}")
-        logger.exception(f"[{task_id}] Error in data loading task: {e}")
+        logger.exception(f"[{task_id}] Error in fitting task: {e}")
 
         await task_storage.update_task(task_id, status="ERROR", error=str(e))
 
@@ -168,6 +168,7 @@ async def upload_data(
         # Обновляем задачу
         await task_storage.update_task(
             task_id,
+            type='UPLOAD',
             status="UPLOADING_FILE",
             upload_progress=100,
             file_path=str(file_path),
@@ -204,6 +205,17 @@ async def get_status(
     status = await task_storage.get_task_status(task_id)
 
     return status # type: ignore
+
+@router.get("/{db_name}/get_processing_tasks", response_model=list[ProcessingTaskResponse])
+async def get_processing_tasks(
+        db_name: str = Path(),        
+        authenticated: bool = Depends(check_token),
+        token: str = Depends(get_token_from_header)
+        ) -> list[ProcessingTaskResponse]:
+
+    result = await task_storage.get_processing_tasks(db_name)
+
+    return result 
 
 
 @router.get("/{db_name}/delete_data", response_model=Optional[StatusResponse])
@@ -248,6 +260,7 @@ async def fit(
         # Обновляем задачу
         await task_storage.update_task(
             task_id,
+            type='FIT',
             status="PREPARING_DATA",
             accounting_db=db_name,
             model_id=model_id,
@@ -264,64 +277,3 @@ async def fit(
 
         await task_storage.update_task(task_id, status="ERROR", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))        
-        
-    # result = await data_loader.get_data_count(accounting_db=db_name)
-    # return result
-
-
-# @router.get("/get_file")
-# async def get_file(
-        # task_id: str,
-        # authenticated: bool = Depends(check_token),
-        # token: str = Depends(get_token_from_header)
-# ):
-#     """Скачивает результат транскрибации."""
-#     logger.info(f"Getting file for task: {task_id}")
-
-#     status = await task_storage.get_task_status(task_id)
-#     if status is None:
-#         raise HTTPException(status_code=404, detail="Task not found")
-
-#     if status.status != "READY":
-#         raise HTTPException(
-#             status_code=400,
-#             detail=f'Transcribing by task "{task_id}" is not ready'
-#         )
-
-#     # Проверяем JSON с таймингами слов
-#     json_path = config.RESULT_FOLDER / f"{task_id}_word_timestamps.json"
-#     if json_path.exists():
-#         logger.info(f"Returning word timings JSON for task {task_id}")
-#         return FileResponse(
-#             path=str(json_path),
-#             filename=json_path.name,
-#             media_type='application/json'
-#         )
-
-#     # Возвращаем текстовый файл
-#     txt_path = config.RESULT_FOLDER / f"{task_id}_result.txt"
-#     if not txt_path.exists():
-#         raise HTTPException(status_code=404, detail="Result file not found")
-
-#     # Логирование метрик
-#     try:
-#         await write_log_event(
-#             token, task_id, "bit-transcribe-v2", "time_transcribe",
-#             f"{status.total_transcription_time / 60:.2f}"
-#         )
-
-#         with open(txt_path, "r", encoding="utf-8") as f:
-#             content = f.read()
-#             symbols_count = len(content)
-#             await write_log_event(
-#                 token, task_id, "bit-transcribe-v2", "symbols_count",
-#                 str(symbols_count)
-#             )
-#     except Exception as e:
-#         logger.error(f"Error logging metrics: {e}")
-
-#     return FileResponse(
-#         path=str(txt_path),
-#         filename=txt_path.name,
-#         media_type='text/plain'
-#     )

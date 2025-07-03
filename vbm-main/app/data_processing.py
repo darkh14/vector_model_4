@@ -15,6 +15,7 @@ from collections import defaultdict
 from datetime import datetime
 from sklearn.base import BaseEstimator, TransformerMixin
 import asyncio
+import uuid 
 
 from pydantic_core._pydantic_core import list_all_errors
 
@@ -30,6 +31,8 @@ class DataLoader:
 
     async def upload_data_from_file(self, task):
         logger.info("saving data to temp zip file")
+
+        await task_storage.update_task(task.task_id, status="UNZIPPING _DATA", progress=10)        
         folder = os.path.join(TEMP_FOLDER, task.task_id)
         os.mkdir(folder)
 
@@ -43,8 +46,8 @@ class DataLoader:
         with open(data_file_path, 'r', encoding='utf-8-sig') as fp:
             json_data = json.load(fp)
 
-
         logger.info("validatind uploaded data")
+        await task_storage.update_task(task.task_id, status="VALIDATING _DATA", progress=20)         
         data = data_validator.validate_raw_data(json_data)
 
         pd_data = pd.DataFrame(data) 
@@ -53,6 +56,7 @@ class DataLoader:
         data = pd_data.to_dict(orient='records')
 
         logger.info("writing data to db")
+        await task_storage.update_task(task.task_id, status="WRITING _TO_DB", progress=60)          
         db_processor.set_accounting_db(task.accounting_db)
         if task.replace:
             await db_processor.delete_many('raw_data')
@@ -220,24 +224,243 @@ class DataValidator:
         return fields_dict
 
 
-class Reader(BaseEstimator, TransformerMixin):
+class Reader:
     
     async def read(self, data_filter):
-        data = await db_processor.find("raw_data", data_filter)
+        data = await db_processor.find("raw_data", convert_dates_in_db_filter(data_filter))
         pd_data = pd.DataFrame(data) 
 
         return pd_data
 
 
+class Checker(BaseEstimator, TransformerMixin):
+
+    def __init__(self, parameters):
+        self.parameters = parameters
+
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X: pd.DataFrame):
+
+        if X.empty:
+            raise ValueError('Fitting dataset is empty. Load more data or change filter.')
+
+        return X
+
+
 class RowToColumn(BaseEstimator, TransformerMixin):
 
-    def __init__(self):
-        pass
+    def __init__(self, parameters):
+        self.parameters = parameters
+        self.x_columns = []
+        self.y_columns = []
+        self.columns_descriptions = {}
+        self.analytic_key_settings = {}
 
-    def get_data_for_fit(self, data, parameters):
-        pass
-        # pd_data = 
+    def fit(self, X, y=None):
+        return self
 
+    def transform(self, X):
+        indicators = [el['id'] for el in self.parameters['indicators']]
+        data = X.loc[X['ind_id'].isin(indicators)].copy()
+        data['analytic_key'] = data.apply(self._get_analytic_key_from_row, axis=1)
+        result_data = self._group_data_with_dims(data)
+
+        for indicator_ind, indicator in enumerate(indicators):
+
+            indicator_settings = [el for el in self.parameters['indicators'] if el['id']==indicator][0]
+            analytic_kinds = indicator_settings['analytics']
+
+            if analytic_kinds:
+                result_data = self._add_analytic_columns_to_data(result_data, data, indicator_settings, indicator_ind)
+            else:
+                result_data = self._add_ind_columns_to_data(result_data, data, indicator_settings, indicator_ind)
+                
+            self.parameters['x_columns'] = self.x_columns
+            self.parameters['y_columns'] = self.y_columns
+            self.parameters['columns_descriptions'] = self.columns_descriptions
+
+        return result_data
+    
+    def _add_ind_columns_to_data(self, result_data, initial_data, 
+                            indicator_settings, 
+                            indicator_ind):
+        
+        to_group = ['period'] + ['{}_id'.format(el) for el in self.parameters['dimensions']]
+        columns = to_group + ['{}_value'.format(el) for el in indicator_settings['numbers']]
+        ind_data = initial_data[columns].loc[initial_data['ind_id']==indicator_settings['id']].groupby(to_group, as_index=False).sum()
+        num_to_rename = {}
+
+        c_columns = []
+        for num_name in indicator_settings['numbers']:
+            column_name = self._get_column_name(indicator_ind, num_name)
+
+            num_to_rename['{}_value'.format(num_name)] = column_name   
+
+            if indicator_settings['outer']:
+                self.y_columns.append(column_name)
+            else:
+                self.x_columns.append(column_name)
+
+            c_columns.append(column_name)
+
+            self.columns_descriptions[column_name] = {'indicator_id': indicator_settings['id'], 
+                                                      'analytic_kinds': [],
+                                                      'analytic_key': '',
+                                                      'period_shift': 0}
+
+        ind_data = ind_data.rename(num_to_rename, axis=1)
+
+        if ind_data.empty:
+            for col in c_columns:
+                result_data[col] = 0
+        else:
+            to_merge = ['period'] + ['{}_id'.format(el) for el in self.parameters['dimensions']]
+            result_data = result_data.merge(ind_data, on=to_merge, how='left')
+
+        return result_data
+
+    def _add_analytic_columns_to_data(self, result_data, initial_data, 
+                            indicator_settings, 
+                            indicator_ind):
+        
+        to_group = ['period'] + ['{}_id'.format(el) for el in self.parameters['dimensions']] + ['analytic_key']
+        columns = to_group + ['{}_value'.format(el) for el in indicator_settings['numbers']]
+        ind_data = initial_data[columns].loc[initial_data['ind_id']==indicator_settings['id']].groupby(to_group, as_index=False).sum() 
+
+        an_keys = sorted(list(ind_data['analytic_key'].unique()))
+
+        for an_ind, an_key in enumerate(an_keys):
+            result_data = self._add_analytic_value_columns_to_data(result_data, ind_data, indicator_settings, indicator_ind, an_key, an_ind)
+        
+        return result_data
+    
+    def _add_analytic_value_columns_to_data(self, result_data, initial_data, indicator_settings, indicator_ind, analytic_key, analytic_ind):
+
+        an_data = initial_data.loc[initial_data['analytic_key'] == analytic_key]
+
+        to_group = ['period'] + ['{}_id'.format(el) for el in self.parameters['dimensions']]
+        columns = to_group + ['{}_value'.format(el) for el in indicator_settings['numbers']]
+   
+        an_data = an_data[columns].groupby(to_group, as_index=False).sum() 
+        num_to_rename = {}
+        c_columns = []
+        for num_name in indicator_settings['numbers']:
+            column_name = self._get_column_name(indicator_ind, num_name, analytic_ind)
+
+            num_to_rename['{}_value'.format(num_name)] = column_name   
+
+            if indicator_settings['outer']:
+                self.y_columns.append(column_name)
+            else:
+                self.x_columns.append(column_name)
+
+            c_columns.append(column_name)
+
+            self.columns_descriptions[column_name] = {'indicator_id': indicator_settings['id'], 
+                                                      'analytic_kinds': indicator_settings['analytics'],
+                                                      'analytic_key': analytic_key,
+                                                      'period_shift': 0}
+        
+        an_data = an_data.rename(num_to_rename, axis=1)
+
+        if an_data.empty:
+            for col in c_columns:
+                result_data[col] = 0
+        else:
+            to_merge = ['period'] + ['{}_id'.format(el) for el in self.parameters['dimensions']]
+            result_data = result_data.merge(an_data, on=to_merge, how='left')
+
+        return result_data
+
+    def _group_data_with_dims(self, data):
+        to_group = ['period'] + ['{}_id'.format(el) for el in self.parameters['dimensions']]
+        grouped_data = data[to_group].groupby(to_group, as_index=False).sum()
+        return grouped_data 
+    
+    def _get_analytic_key_from_row(self, row):
+        indicator = row['ind_id']
+        analytic_kinds = [el['analytics'] for el in self.parameters['indicators'] if el['id']==indicator][0]
+
+        vv = []
+        if analytic_kinds:
+
+            for an in analytic_kinds:
+                vv.append(an)
+                vv.append(row['{}_id'.format(an)])
+
+            str_v = '_'.join(vv)
+            result = str(uuid.uuid3(uuid.NAMESPACE_DNS, str_v))
+        else:
+            result = ''
+
+        if result not in self.analytic_key_settings:
+            self.analytic_key_settings[result] = vv
+
+        return result
+
+    def _get_column_name(self, indicator_ind, num_name, analytic_ind=None):
+        if analytic_ind is not None:
+            return 'ind_{}_an_{}_{}'.format(indicator_ind, analytic_ind, num_name)
+        else:
+            return 'ind_{}_{}'.format(indicator_ind, num_name)
+
+
+class NanProcessor(BaseEstimator, TransformerMixin):
+    """ Transformer for working with nan values (deletes nan rows, columns, fills 0 to na values) """
+
+    def __init__(self, parameters):
+        self.parameters = parameters
+
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, x: pd.DataFrame) -> pd.DataFrame:
+        """
+        Process nan values: removes all nan rows and columns, fills 0 instead single nan values
+        :param x: data before nan processing
+        :return: data after na  processing
+        """
+
+        x = x.fillna(0)
+
+        return x
+
+
+class Shuffler(BaseEstimator, TransformerMixin):
+    """
+    Transformer class to shuffle data rows
+    """
+    def __init__(self, parameters):
+        self.parameters = parameters
+
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, x: pd.DataFrame) -> pd.DataFrame:
+        return x.sample(frac=1).reset_index(drop=True).copy()
+
+
+def convert_dates_in_db_filter(db_filter, is_period=False):
+    if isinstance(db_filter, list):
+        result = []
+        for el in db_filter:
+            result.append(convert_dates_in_db_filter(el, is_period))
+    elif isinstance(db_filter, dict):
+        result = {}
+        for k, v in db_filter.items():
+            if k=='period':
+                result[k] = convert_dates_in_db_filter(v, True)        
+            else:
+                result[k] = convert_dates_in_db_filter(v, is_period)
+    elif isinstance(db_filter, str) and is_period:
+        result = datetime.strptime(db_filter, '%d.%m.%Y')
+    else:
+        result = db_filter
+
+    return result
 
 
 data_loader = DataLoader()
