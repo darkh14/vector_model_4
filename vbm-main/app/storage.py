@@ -82,7 +82,8 @@ class TaskStorage:
     async def save_upload_file(self, task_id: str, filename: str, content: bytes) -> Path:
         """Сохраняет загруженный файл."""
         folder = os.path.join(SOURCE_FOLDER, f"{task_id}")
-        os.mkdir(folder)
+        #os.mkdir(folder) # Пофиксил баг
+        os.makedirs(folder, exist_ok=True)
         file_path = os.path.join(folder, f"{filename}")
 
         async with asyncio.Lock():

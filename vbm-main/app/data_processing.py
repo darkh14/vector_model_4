@@ -34,7 +34,8 @@ class DataLoader:
 
         await task_storage.update_task(task.task_id, status="UNZIPPING _DATA", progress=10)        
         folder = os.path.join(TEMP_FOLDER, task.task_id)
-        os.mkdir(folder)
+        #os.mkdir(folder) #Фикс бага с несуществующими папками
+        os.makedirs(folder, exist_ok=True)
 
         logger.info("reading  data from zip file, unzipping")
         await self.get_data_from_zipfile(task.file_path, folder)
