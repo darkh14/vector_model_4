@@ -96,8 +96,8 @@ class TaskStorage:
     async def cleanup_task_files(self, task_id: str) -> None:
         """Очищает временные файлы задачи."""
         patterns = [
-            SOURCE_FOLDER / f"{task_id}_*",
-            TEMP_FOLDER / f"{task_id}_*",
+            SOURCE_FOLDER / f"{task_id}",
+            TEMP_FOLDER / f"{task_id}",
         ]
 
         for pattern in patterns:

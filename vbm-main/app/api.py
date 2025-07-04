@@ -7,7 +7,7 @@ from fastapi import APIRouter, Header, HTTPException, BackgroundTasks, File, Upl
 from typing import Optional, Annotated
 
 import config
-from entities import HealthResponse, TaskResponse, StatusResponse, FittingParameters, ProcessingTaskResponse
+from entities import HealthResponse, TaskResponse, StatusResponse, FittingParameters, ProcessingTaskResponse, ModelInfo
 from storage import task_storage
 from data_processing import data_loader
 from models import Model
@@ -112,7 +112,7 @@ async def process_fitting_task(task_id: str, replace=False):
             logger.error(f"Task not found: {task_id}")
             return
 
-        # Выполняем загрузку
+        # Выполняем обучение
 
         model = Model(task.model_id, task.fitting_parameters)
         await model.initialize()
@@ -277,3 +277,37 @@ async def fit(
 
         await task_storage.update_task(task_id, status="ERROR", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))        
+
+
+@router.get("/{db_name}/get_model_info")
+async def get_model_info(
+        db_name: str = Path(),
+        model_id: str = Query(),     
+        authenticated: bool = Depends(check_token),
+        token: str = Depends(get_token_from_header),
+        ) -> Optional[ModelInfo]:
+    
+        model = Model(model_id)
+        await model.initialize()
+
+        result = await model.get_info()
+
+        if result is None:
+            return result
+        
+        return ModelInfo.model_validate(result)
+
+
+@router.get("/{db_name}/delete_model")
+async def delete_model(
+        db_name: str = Path(),
+        model_id: str = Query(),     
+        authenticated: bool = Depends(check_token),
+        token: str = Depends(get_token_from_header),
+        ) -> str:
+    
+        model = Model(model_id)
+        await model.initialize()
+        await model.delete()
+        
+        return 'Model id={} deleted sucessfully'.format(model_id)
