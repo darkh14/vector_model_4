@@ -12,6 +12,7 @@ class TaskResponse(BaseModel):
     task_id: UUID4
     message: str
 
+
 class ProcessingTaskResponse(BaseModel):
     task_id: str
     type: str
@@ -75,23 +76,3 @@ class ColumnDescription(BaseModel):
 class ModelInfo(BaseModel):
     model_id: str
     columns_descriptions: list[ColumnDescription]
-
-# class LoadingDataResponse(BaseModel):
-#     loading_id: str
-#     message: str
-
-
-# class TokenRequest(BaseModel):
-#     email: EmailStr
-
-# class TokenCheck(BaseModel):
-#     token: str
-
-# class TokenData(BaseModel):
-#     email: EmailStr
-#     token: str
-#     expiration: datetime
-#     type: str
-#     created_at: datetime
-#     last_used: Optional[datetime]
-    

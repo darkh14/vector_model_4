@@ -236,8 +236,9 @@ class Reader:
 
 class Checker(BaseEstimator, TransformerMixin):
 
-    def __init__(self, parameters):
+    def __init__(self, parameters, for_predict=False):
         self.parameters = parameters
+        self.for_predict = for_predict
 
     def fit(self, X, y=None):
         return self
@@ -246,18 +247,20 @@ class Checker(BaseEstimator, TransformerMixin):
 
         if X.empty:
             raise ValueError('Fitting dataset is empty. Load more data or change filter.')
-
+        
         return X
 
 
 class RowToColumn(BaseEstimator, TransformerMixin):
 
-    def __init__(self, parameters):
+    def __init__(self, parameters, for_predict=False):
         self.parameters = parameters
+        self.for_predict = for_predict
         self.x_columns = []
         self.y_columns = []
         self.columns_descriptions = {}
         self.analytic_key_settings = {}
+        self.only_outers = False
 
     def fit(self, X, y=None):
         return self
@@ -273,16 +276,67 @@ class RowToColumn(BaseEstimator, TransformerMixin):
             indicator_settings = [el for el in self.parameters['indicators'] if el['id']==indicator][0]
             analytic_kinds = indicator_settings['analytics']
 
+            if self.for_predict and indicator_settings['outer']:
+                continue            
+
             if analytic_kinds:
                 result_data = self._add_analytic_columns_to_data(result_data, data, indicator_settings, indicator_ind)
             else:
                 result_data = self._add_ind_columns_to_data(result_data, data, indicator_settings, indicator_ind)
                 
-            self.parameters['x_columns'] = self.x_columns
-            self.parameters['y_columns'] = self.y_columns
-            self.parameters['columns_descriptions'] = self.columns_descriptions
+            if not self.for_predict:
+                self.parameters['x_columns'] = self.x_columns
+                self.parameters['y_columns'] = self.y_columns
+                self.parameters['columns_descriptions'] = self.columns_descriptions
 
         return result_data
+    
+    def inverse_transform(self, X):
+
+        non_model_columns = ['period'] + ['{}_id'.format(el) for el in self.parameters['dimensions']]
+
+        in_data = X[non_model_columns].copy()
+        in_data['ind_id'] = ''
+
+        all_an_kind = []
+        all_nums = []
+        for ind in self.parameters['indicators']:
+            if ind['analytics']:
+                all_an_kind.extend(ind['analytics'])
+            all_nums.extend(ind['numbers'])
+
+        all_an_kind = list(set(all_an_kind))
+        all_nums = list(set(all_nums))  
+
+        for an_kind in all_an_kind:
+            in_data['{}_id'.format(an_kind)] = ''
+        
+        for num in all_nums:
+            in_data['{}_value'.format(num)] = 0
+
+        data_dict = {}
+
+        for column_name, column_settings in self.parameters['columns_descriptions'].items():
+            if self.only_outers and not column_settings['outer']:
+                continue
+            portion_name = '{}_{}'.format(column_settings['indicator_id'], column_settings['analytic_key'])
+            c_data = data_dict.get(portion_name)
+
+            if c_data:
+                c_data['{}_value'.format(column_settings['num'])] = X[column_name]
+            else:
+                c_data = in_data.copy()
+                c_data['ind_id'] = column_settings['indicator_id']
+                for an_name, an_value in column_settings['analytics'].items():
+                    c_data['{}_id'.format(an_name)] = an_value    
+
+                c_data['{}_value'.format(column_settings['num'])] = X[column_name]
+
+                data_dict[portion_name] = c_data
+
+        y = pd.concat(data_dict.values(), axis=0)
+
+        return y
     
     def _add_ind_columns_to_data(self, result_data, initial_data, 
                             indicator_settings, 
@@ -307,9 +361,11 @@ class RowToColumn(BaseEstimator, TransformerMixin):
             c_columns.append(column_name)
 
             self.columns_descriptions[column_name] = {'indicator_id': indicator_settings['id'], 
-                                                      'analytics': {},
-                                                      'analytic_key': '',
-                                                      'period_shift': 0}
+                                                    'analytics': {},
+                                                    'analytic_key': '',
+                                                    'period_shift': 0,
+                                                    'num': num_name,
+                                                    'outer': indicator_settings['outer']}
 
         ind_data = ind_data.rename(num_to_rename, axis=1)
 
@@ -358,11 +414,14 @@ class RowToColumn(BaseEstimator, TransformerMixin):
                 self.x_columns.append(column_name)
 
             c_columns.append(column_name)
+            
 
             self.columns_descriptions[column_name] = {'indicator_id': indicator_settings['id'], 
-                                                      'analytics': self.analytic_key_settings[analytic_key],
-                                                      'analytic_key': analytic_key,
-                                                      'period_shift': 0}
+                                                    'analytics': self.analytic_key_settings[analytic_key],
+                                                    'analytic_key': analytic_key,
+                                                    'period_shift': 0,
+                                                    'num': num_name,
+                                                    'outer': indicator_settings['outer']}
         
         an_data = an_data.rename(num_to_rename, axis=1)
 
@@ -414,8 +473,9 @@ class RowToColumn(BaseEstimator, TransformerMixin):
 class NanProcessor(BaseEstimator, TransformerMixin):
     """ Transformer for working with nan values (deletes nan rows, columns, fills 0 to na values) """
 
-    def __init__(self, parameters):
+    def __init__(self, parameters, for_predict=False):
         self.parameters = parameters
+        self.for_predict = for_predict
 
 
     def fit(self, X, y=None):
@@ -437,8 +497,9 @@ class Shuffler(BaseEstimator, TransformerMixin):
     """
     Transformer class to shuffle data rows
     """
-    def __init__(self, parameters):
+    def __init__(self, parameters, for_predict=False):
         self.parameters = parameters
+        self.for_predict = for_predict        
 
     def fit(self, X, y=None):
         return self

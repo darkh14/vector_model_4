@@ -7,7 +7,14 @@ from fastapi import APIRouter, Header, HTTPException, BackgroundTasks, File, Upl
 from typing import Optional, Annotated
 
 import config
-from entities import HealthResponse, TaskResponse, StatusResponse, FittingParameters, ProcessingTaskResponse, ModelInfo
+from entities import (HealthResponse, 
+                      RawqDataStr, 
+                      TaskResponse, 
+                      StatusResponse, 
+                      FittingParameters, 
+                      ProcessingTaskResponse, 
+                      ModelInfo)
+
 from storage import task_storage
 from data_processing import data_loader
 from models import Model
@@ -277,6 +284,26 @@ async def fit(
 
         await task_storage.update_task(task_id, status="ERROR", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))        
+
+@router.post("/{db_name}/predict", response_model=list[RawqDataStr])
+async def predict(   
+        db_name: str = Path(),
+        model_id: str = Query(),     
+        authenticated: bool = Depends(check_token),
+        token: str = Depends(get_token_from_header),
+        X: list[RawqDataStr] = Body()) -> list[RawqDataStr]:
+    
+        model = Model(model_id)
+        await model.initialize()
+        data = []
+        for row in X:
+            data.append(row.model_dump())
+
+        result_data = await model.predict(data, db_name)
+        result = []
+        for row in result_data:
+            result.append(RawqDataStr.model_validate(row))
+        return  result
 
 
 @router.get("/{db_name}/get_model_info")
