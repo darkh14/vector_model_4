@@ -1,8 +1,13 @@
 from db import db_processor
-from typing import Optional
+from typing import Optional, Dict
 from sklearn.pipeline import Pipeline
 from data_processing import data_validator, Reader, RowToColumn, Checker, NanProcessor, Shuffler
+from entities import ModelStatuses, ModelTypes
+
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+
 import asyncio
 import pandas as pd
 import pickle
@@ -15,69 +20,107 @@ import logging
 from datetime import datetime
 
 
-
 logging.getLogger("vbm_data_processing_logger").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
+
 class Model:
 
-    def __init__(self, model_id, parameters=None):
+    def __init__(self, model_id, model_type=None, parameters=None):
+        self.model_type = model_type
         self.model_id = model_id
         self.parameters = parameters.model_dump() if parameters else None
         self.data_filter = None
         self.ml_model = None
         self.scaler = None
+        self.status = ModelStatuses.CREATED
+        self.error_text = ''
+        self.initialized = False
 
-    async def initialize(self):
-        if not self.parameters:
+    async def initialize(self, parameters=None):
+
+        if self.initialized:
+            return None
+        
+        if not self.model_type:
             await self.read_model()
+        else:
+            self.parameters = parameters if parameters else None            
 
         if self.parameters:
             self.data_filter = self.parameters.get('data_filter')
+
+        self.initialized = True
 
     async def read_model(self):
         model_parameters = await db_processor.find_one('models', {'model_id': self.model_id})
         if model_parameters is not None:
             model_parameters['data_filter'] = pickle.loads(model_parameters['data_filter'])
             self.parameters = model_parameters
-            model_binary = await db_processor.find_one('models_bin', {'model_id': self.model_id})
-            if model_binary:
-                
-                scaler = Scaler(self.parameters)
-                scaler.from_binary(model_binary['scaler'])
-                self.scaler = scaler
+            status = model_parameters.get('status') or 'created'
+            model_type = model_parameters.get('model_type')
+            self.status = ModelStatuses(status)
+            self.model_type = ModelTypes(model_type) if model_type else None
 
-                ml_model = NNModel(self.parameters)
-                ml_model.from_binary(model_binary['model'])
+            model_bin = model_parameters['model']
+            scaler_bin = model_parameters['scaler']
+
+            if model_bin:
+                ml_model = self._get_ml_model(self.model_type, self.parameters)
+                ml_model.from_binary(model_bin)
                 self.ml_model = ml_model
+            
+            if scaler_bin:
+                scaler = Scaler(self.parameters)
+                scaler.from_binary(scaler_bin)
+                self.scaler = scaler
 
     async def fit(self, data_filter: Optional[dict] = None):
         
-        logger.info("Reading data from db. Мodel id={}".format(self.model_id))
-        X_y = await Reader().read(data_filter)
-        logger.info("Transforming and checking data. Мodel id={}".format(self.model_id))
-        pipeline = Pipeline([
-                            ('checker', Checker(self.parameters)),
-                             ('row_column_transformer', RowToColumn(self.parameters)),
-                             ('nan_processor', NanProcessor(self.parameters)),
-                             ('shuffler', Shuffler(self.parameters)),
-                             ('scaler', Scaler(self.parameters)),
-                             ])
+        try:
+            if not self.status in [ModelStatuses.CREATED, ModelStatuses.ERROR, ModelStatuses.READY]:
+                raise ValueError('Model is not ready to be fit!')
 
-        self.scaler = pipeline.named_steps['scaler']
+            if self.status == ModelStatuses.ERROR:
+                self.initialized = False
+                self.initialize(self.parameters)              
 
-        X_y = pipeline.fit_transform(X_y, [])
+            self.status = ModelStatuses.FITTING           
 
-        X, y = X_y[self.parameters['x_columns']].to_numpy(), X_y[self.parameters['y_columns']].to_numpy()
+            logger.info("Reading data from db. Мodel id={}".format(self.model_id))
+            X_y = await Reader().read(data_filter)
+            logger.info("Transforming and checking data. Мodel id={}".format(self.model_id))
+            pipeline = Pipeline([
+                                ('checker', Checker(self.parameters)),
+                                ('row_column_transformer', RowToColumn(self.parameters)),
+                                ('nan_processor', NanProcessor(self.parameters)),
+                                ('shuffler', Shuffler(self.parameters)),
+                                ('scaler', Scaler(self.parameters)),
+                                ])
 
-        logger.info("Fitting model. Мodel id={}".format(self.model_id))
-        self.ml_model = NNModel()
-        f_parameters = {'epochs': 300}
-        self.ml_model.fit(X, y, f_parameters)
+            self.scaler = pipeline.named_steps['scaler']
 
-        logger.info("Saving model and fitting parameters to db. Мodel id={}".format(self.model_id))
-        await self.write_to_db()
-        logger.info("Fitting model is finished. Мodel id={}".format(self.model_id))
+            X_y = pipeline.fit_transform(X_y, [])
+
+            X, y = X_y[self.parameters['x_columns']].to_numpy(), X_y[self.parameters['y_columns']].to_numpy()
+
+            logger.info("Fitting model. Мodel id={}".format(self.model_id))
+            self.ml_model = self._get_ml_model(self.model_type, self.parameters)
+            self.ml_model.fit(X, y, parameters=self.parameters)
+
+            logger.info("Saving model and fitting parameters to db. Мodel id={}".format(self.model_id))
+            await self.write_to_db()
+            self.status = ModelStatuses.READY
+            logger.info("Fitting model is finished. Мodel id={}".format(self.model_id))
+
+        except Exception as e:
+            self.status = ModelStatuses.ERROR
+            self.error_text = str(e)
+
+            await self.write_to_db()
+            raise e            
+
+        return True
 
     async def predict(self, X, accounting_db=''):
 
@@ -228,14 +271,19 @@ class Model:
 
         return data
 
-
     async def write_to_db(self):
 
-        parameters_to_db = self.parameters.copy()
-        parameters_to_db['data_filter'] = pickle.dumps(parameters_to_db['data_filter'])
+        parameters_to_db = self.parameters.copy() if self.parameters else {}
+        parameters_to_db['data_filter'] = pickle.dumps(parameters_to_db['data_filter']) if parameters_to_db['data_filter'] else b''
+        parameters_to_db['status'] = self.status.value
+        parameters_to_db['model_type'] = self.model_type.value if self.model_type else ''
+
+        model_bin = self.ml_model.get_binary() if self.ml_model else None
+        scaler_bin = self.scaler.get_binary() if self.scaler else None
+        parameters_to_db['model'] = model_bin
+        parameters_to_db['scaler'] = scaler_bin
+
         await db_processor.insert_one('models', parameters_to_db, {'model_id': self.model_id})
-        bin_data = {'model_id': self.model_id, 'scaler': self.scaler.get_binary(), 'model': self.ml_model.get_binary()}
-        await db_processor.insert_one('models_bin', bin_data, {'model_id': self.model_id})
 
     async def get_info(self):
 
@@ -245,23 +293,83 @@ class Model:
         result = {}
         result['model_id'] = self.model_id
         result['columns_descriptions'] = []
-        for k, v in self.parameters['columns_descriptions'].items():
-            descr = {'name': k, 
-                     'analytics': v['analytics'],
-                     'analytic_key': v['analytic_key'],
-                     'period_shift': v['period_shift']}
-            result['columns_descriptions'].append(descr)
+
+        if 'columns_descriptions' in self.parameters:
+            for k, v in self.parameters['columns_descriptions'].items():
+                descr = {'name': k, 
+                        'analytics': v['analytics'],
+                        'analytic_key': v['analytic_key'],
+                        'period_shift': v['period_shift']}
+                result['columns_descriptions'].append(descr)
+
+        result['status'] = self.status.value
         return result
 
     async def delete(self):
-        await db_processor.delete_many('models', {'model_id': self.model_id})
-        await db_processor.delete_many('models_bin', {'model_id': self.model_id})        
+        await db_processor.delete_many('models', {'model_id': self.model_id})     
 
         self.parameters = None
         self.data_filter = None
         self.ml_model = None
         self.scaler = None
+        self.status = ModelStatuses.CREATED
+        self.error_text = ''
+        self.initialized = False
 
+    def _get_ml_model(self, model_type, parameters):
+        ml_model_classes = [el for el in MlModel.__subclasses__() if el.model_type == model_type]
+
+        if not ml_model_classes:
+            raise ValueError('Model type "{}" is not supported!'.format(model_type))
+        
+        return ml_model_classes[0](parameters)
+
+
+class ModelManager:
+
+    def __init__(self):
+        self.models = []
+
+    def get_model(self, model_id, model_type=None):
+        c_models = [el for el in self.models if el['model_id'] == model_id]
+        if c_models:
+            model  = c_models[0]['model']
+        elif model_type:
+            model = Model(model_id, model_type=model_type) 
+            self.models.append({'model_id': model_id, 'model_type': model_type, 'model': model})     
+        else:
+            model = None  
+        
+        return model
+
+    async def read_models(self):
+
+        self.models = []
+        models_from_db = await db_processor.find('models')
+        for model_from_db in models_from_db:
+            model = Model(model_from_db['model_id'])
+            await model.initialize()
+
+            self.models.append({'model_id': model_from_db['model_id'],
+                                'model_type': model_from_db['model_type'],
+                                'model': model})
+
+    async def _get_model_from_db(self, model_id):
+        model = Model(model_id)
+        await model.initialize()
+
+        if not model.parameters:
+            model = None
+
+        return model
+
+    async def delete_model(self, model_id):
+        model = self.get_model(model_id)
+        if not model:
+            raise ValueError('Model id "{}" not found'.format(model_id))
+
+        self.models = [el for el in self.models if el['model_id'] != model_id]
+        await model.delete()
 
 class Scaler:
 
@@ -317,7 +425,7 @@ class Scaler:
 
 
 class MlModel(ABC):
-    
+    model_type = None
     @abstractmethod
     def __init__(self, parameters=None):
         ...
@@ -340,14 +448,14 @@ class MlModel(ABC):
 
 
 class NNModel(MlModel):
-
+    model_type = ModelTypes.nn
     def __init__(self, parameters=None):
         self.nn = None
 
     def fit(self, X, y, parameters):
         self.nn = self.get_nn(X.shape[1], y.shape[1])
-
-        self.nn.fit(X, y, epochs=parameters['epochs'])
+        epochs = parameters.get('epochs') or 300
+        self.nn.fit(X, y, epochs=epochs)
 
     def predict(self, X):
         return self.nn.predict(X)
@@ -385,4 +493,46 @@ class NNModel(MlModel):
                 f.write(model_bin)   
                      
             self.nn = load_model(fp.name)
-            fp.close()      
+            fp.close()  
+
+
+class PfModel(MlModel):
+    model_type = ModelTypes.pf
+    def __init__(self, parameters=None):
+        self.power = parameters.get('power') or 2
+        self.pf = None
+        self.linear = None
+
+    def fit(self, X, y, parameters):
+        self.linear = self.get_linear(X.shape[1], y.shape[1])
+        self.pf = self.get_pf()
+
+        X_pf = self.pf.fit_transform(X)
+
+        return self.linear.fit(X_pf, y)
+
+    def predict(self, X):
+        X_pf = self.pf.transform(X)        
+        return self.linear.predict(X_pf)
+
+    def get_pf(self):
+        return PolynomialFeatures(degree=self.power, interaction_only=True, include_bias=True)
+    
+    def get_linear(self, input_number, output_number):
+        return LinearRegression()
+
+    def get_binary(self):
+
+        model_data = {'linear': self.linear, 'pf': self.pf}
+        model_bin = pickle.dumps(model_data)
+
+        return model_bin
+    
+    def from_binary(self, model_bin):
+
+        model_data = pickle.loads(model_bin)
+        self.pf = model_data['pf']
+        self.linear = model_data['linear']
+
+
+model_manager = ModelManager()

@@ -1,6 +1,19 @@
 from pydantic import BaseModel, ValidationError, UUID4, field_validator
 from typing import Optional
 from datetime import datetime
+from enum import Enum
+
+
+class ModelStatuses(Enum):
+    CREATED = 'CREATED'
+    FITTING = 'FITTING'    
+    READY = 'READY'
+    ERROR = 'ERROR'
+
+
+class ModelTypes(Enum):
+    pf = 'pf'
+    nn = 'nn'    
 
 
 class HealthResponse(BaseModel):
@@ -39,7 +52,7 @@ class FittingIndicator(BaseModel):
     period_year_numbers: Optional[list[int]] = None
 
 
-class FittingParameters(BaseModel):
+class FittingParameters(BaseModel, extra='allow'):
     model_id: str
     dimensions: list[str]
     indicators: list[FittingIndicator]
@@ -56,6 +69,7 @@ class TaskData(BaseModel):
     accounting_db: Optional[str] = None
     replace: Optional[bool] = False
     model_id: Optional[str] = None
+    model_type: Optional[ModelTypes] = None
     fitting_parameters: Optional[FittingParameters] = None
 
     # Внутренние поля
@@ -76,3 +90,5 @@ class ColumnDescription(BaseModel):
 class ModelInfo(BaseModel):
     model_id: str
     columns_descriptions: list[ColumnDescription]
+    status: ModelStatuses
+

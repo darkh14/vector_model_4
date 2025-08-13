@@ -13,11 +13,12 @@ from entities import (HealthResponse,
                       StatusResponse, 
                       FittingParameters, 
                       ProcessingTaskResponse, 
-                      ModelInfo)
+                      ModelInfo,
+                      ModelTypes)
 
 from storage import task_storage
 from data_processing import data_loader
-from models import Model
+from models import Model, model_manager
 
 # from statistic import write_log_event, get_token_from_header
 from cachetools import TTLCache
@@ -119,16 +120,16 @@ async def process_fitting_task(task_id: str, replace=False):
             logger.error(f"Task not found: {task_id}")
             return
 
-        # Выполняем обучение
-
-        model = Model(task.model_id, task.fitting_parameters)
-        await model.initialize()
+        model = model_manager.get_model(task.model_id, model_type=task.model_type)
+        await model.initialize(parameters=task.fitting_parameters.model_dump())
 
         result = await model.fit(task.fitting_parameters.data_filter)
 
+        if result:
+            await model.write_to_db()
+
         logger.info(f"[{task_id}] fitting task completed")
 
-        # Обновляем статус
         await task_storage.update_task(task_id, status="READY", progress=100)
 
         logger.info(f"[{task_id}] Task marked READY")
@@ -250,7 +251,8 @@ async def get_data_count(
 async def fit(
         background_tasks: BackgroundTasks,   
         db_name: str = Path(),
-        model_id: str = Query(),     
+        model_id: str = Query(), 
+        model_type: str = Query(default=''),    
         authenticated: bool = Depends(check_token),
         token: str = Depends(get_token_from_header),
         parameters: Optional[FittingParameters] = Body(default=None)
@@ -271,6 +273,7 @@ async def fit(
             status="PREPARING_DATA",
             accounting_db=db_name,
             model_id=model_id,
+            model_type=ModelTypes(model_type) if model_type else None,
             fitting_parameters = parameters
         )
 
@@ -285,6 +288,7 @@ async def fit(
         await task_storage.update_task(task_id, status="ERROR", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))        
 
+
 @router.post("/{db_name}/predict", response_model=list[RawqDataStr])
 async def predict(   
         db_name: str = Path(),
@@ -293,8 +297,11 @@ async def predict(
         token: str = Depends(get_token_from_header),
         X: list[RawqDataStr] = Body()) -> list[RawqDataStr]:
     
-        model = Model(model_id)
-        await model.initialize()
+        model = model_manager.get_model(model_id)
+        
+        if not model:
+            raise ValueError('Model id "{}" not found'.format(model_id))
+
         data = []
         for row in X:
             data.append(row.model_dump())
@@ -314,9 +321,11 @@ async def get_model_info(
         token: str = Depends(get_token_from_header),
         ) -> Optional[ModelInfo]:
     
-        model = Model(model_id)
-        await model.initialize()
+        model = model_manager.get_model(model_id)
 
+        if not model:
+           return None
+        
         result = await model.get_info()
 
         if result is None:
@@ -333,8 +342,6 @@ async def delete_model(
         token: str = Depends(get_token_from_header),
         ) -> str:
     
-        model = Model(model_id)
-        await model.initialize()
-        await model.delete()
+        await model_manager.delete_model(model_id)
         
         return 'Model id={} deleted sucessfully'.format(model_id)

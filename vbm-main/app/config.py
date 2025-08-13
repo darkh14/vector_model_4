@@ -6,7 +6,7 @@ VERSION = '4.0.0.0'
 BASE_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 class Settings(BaseSettings):
-    MONGODB_URL: str = 'mongodb://localhost:27017'
+    DB_URL: str = 'mongodb://localhost:27017'
     SOURCE_FOLDER: Path = BASE_DIR / 'data/source'
     TEMP_FOLDER: Path = BASE_DIR / 'data/temp'
     TEST_MODE: bool = False
