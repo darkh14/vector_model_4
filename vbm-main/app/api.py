@@ -8,17 +8,20 @@ from typing import Optional, Annotated
 
 import config
 from entities import (HealthResponse, 
-                      RawqDataStr, 
+                      RawDataStr, 
                       TaskResponse, 
                       StatusResponse, 
                       FittingParameters, 
                       ProcessingTaskResponse, 
                       ModelInfo,
-                      ModelTypes)
+                      ModelTypes,
+                      FeatureImportances, 
+                      SAData)
 
 from storage import task_storage
 from data_processing import data_loader
 from models import Model, model_manager
+from post_processing import post_processor
 
 # from statistic import write_log_event, get_token_from_header
 from cachetools import TTLCache
@@ -76,7 +79,7 @@ async def check_token(token: str = Header()) -> bool:
 
 @router.get("/health", response_model=HealthResponse)
 async def health():
-    return {'status': 'OK', 'version': config.VERSION}
+    return {'status': 'OK', 'version': config.VERSION}  
 
 
 async def process_uploading_task(task_id: str, replace=False):
@@ -109,8 +112,7 @@ async def process_uploading_task(task_id: str, replace=False):
         await task_storage.update_task(task_id, status="ERROR", error=str(e))
 
 
-async def process_fitting_task(task_id: str, replace=False):
-    """Фоновая задача для загрузки данных из файла."""
+async def process_fitting_task(task_id: str):
 
     logger.info(f"[{task_id}] process_fitting_task started")
 
@@ -141,6 +143,33 @@ async def process_fitting_task(task_id: str, replace=False):
         await task_storage.update_task(task_id, status="ERROR", error=str(e))
 
 
+async def process_calculating_fi_task(task_id: str):
+
+    logger.info(f"[{task_id}] process_calculating_fi_task started")
+
+    try:
+        task = await task_storage.get_task(task_id)
+        if not task:
+            logger.error(f"Task not found: {task_id}")
+            return
+
+        model = model_manager.get_model(task.model_id, model_type=task.model_type)
+
+        await post_processor.calculate_feature_importances(model, task.fitting_parameters.data_filter)
+
+        logger.info(f"[{task_id}] calculating fi task completed")
+
+        await task_storage.update_task(task_id, status="READY", progress=100)
+
+        logger.info(f"[{task_id}] Task marked READY")
+
+    except Exception as e:
+        logger.error(f"Error processing task {task_id}: {e}")
+        logger.exception(f"[{task_id}] Error in calculating fi task: {e}")
+
+        await task_storage.update_task(task_id, status="ERROR", error=str(e))        
+
+
 async def get_token_from_header(token: Optional[str] = Header(None, alias="token")):
     """
     Извлекает токен из заголовка запроса.
@@ -154,15 +183,14 @@ async def get_token_from_header(token: Optional[str] = Header(None, alias="token
     return token
 
 
-@router.post("/{db_name}/upload_data", response_model=TaskResponse)
+@router.post("/upload_data", response_model=TaskResponse)
 async def upload_data(
         background_tasks: BackgroundTasks,
         file: UploadFile = File(...),
-        db_name: str = Path(),
         authenticated: bool = Depends(check_token),
         token: str = Depends(get_token_from_header),
         replace: bool = Query(default=False)) -> TaskResponse:
-    """Запускает загрузку данных из файла."""
+
     logger.info(f"Starting uploading from file: {file.filename}")
 
     task_id = str(uuid.uuid4())
@@ -180,7 +208,6 @@ async def upload_data(
             status="UPLOADING_FILE",
             upload_progress=100,
             file_path=str(file_path),
-            accounting_db=db_name,
             replace=replace
         )
 
@@ -203,54 +230,59 @@ async def upload_data(
             raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{db_name}/get_status", response_model=Optional[StatusResponse])
+@router.get("/get_status", response_model=Optional[StatusResponse])
 async def get_status(
         task_id: str,
         authenticated: bool = Depends(check_token),
         token: str = Depends(get_token_from_header)
         ) -> StatusResponse:
-    """Получает статус задачи."""
+
     status = await task_storage.get_task_status(task_id)
 
     return status # type: ignore
 
-@router.get("/{db_name}/get_processing_tasks", response_model=list[ProcessingTaskResponse])
-async def get_processing_tasks(
-        db_name: str = Path(),        
+
+@router.get("/get_processing_tasks", response_model=list[ProcessingTaskResponse])
+async def get_processing_tasks(    
         authenticated: bool = Depends(check_token),
         token: str = Depends(get_token_from_header)
         ) -> list[ProcessingTaskResponse]:
 
-    result = await task_storage.get_processing_tasks(db_name)
+    result = await task_storage.get_processing_tasks()
 
     return result 
 
 
-@router.get("/{db_name}/delete_data", response_model=Optional[StatusResponse])
-async def delete_data( 
-        db_name: str = Path(),       
+@router.post("/delete_data", response_model=Optional[StatusResponse])
+async def delete_data(     
         authenticated: bool = Depends(check_token),
-        token: str = Depends(get_token_from_header)
+        token: str = Depends(get_token_from_header),
+        data_filter: Optional[dict] = Body(default=None)
         ) -> StatusResponse:
-    await data_loader.delete_data(accounting_db=db_name)
-    return StatusResponse(status='READY', description='All data is deleted successfully')
+    try:
+        await data_loader.delete_data(data_filter)
+        return StatusResponse(status='READY', description='All data is deleted successfully')
+    except Exception as e:
+        logger.error(f"Error in deleting data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))  
 
 
-@router.get("/{db_name}/get_data_count")
-async def get_data_count(   
-        db_name: str = Path(),     
+@router.post("/get_data_count")
+async def get_data_count(       
         authenticated: bool = Depends(check_token),
-        token: str = Depends(get_token_from_header)
-        ) -> int:
-        
-    result = await data_loader.get_data_count(accounting_db=db_name)
-    return result
+        token: str = Depends(get_token_from_header),
+        data_filter: Optional[dict] = Body(default=None)) -> int:
+    try:
+        result = await data_loader.get_data_count(data_filter)
+        return result
+    except Exception as e:
+        logger.error(f"Error in getting data count: {e}")
+        raise HTTPException(status_code=500, detail=str(e))  
 
 
-@router.post("/{db_name}/fit")
+@router.post("/fit")
 async def fit(
         background_tasks: BackgroundTasks,   
-        db_name: str = Path(),
         model_id: str = Query(), 
         model_type: str = Query(default=''),    
         authenticated: bool = Depends(check_token),
@@ -271,7 +303,6 @@ async def fit(
             task_id,
             type='FIT',
             status="PREPARING_DATA",
-            accounting_db=db_name,
             model_id=model_id,
             model_type=ModelTypes(model_type) if model_type else None,
             fitting_parameters = parameters
@@ -289,14 +320,63 @@ async def fit(
         raise HTTPException(status_code=500, detail=str(e))        
 
 
-@router.post("/{db_name}/predict", response_model=list[RawqDataStr])
-async def predict(   
-        db_name: str = Path(),
+@router.post("/calculate_fi")
+async def calculate_fi(
+        background_tasks: BackgroundTasks,
+        model_id: str = Query(),    
+        authenticated: bool = Depends(check_token),
+        parameters: Optional[FittingParameters] = Body(default=None),        
+        token: str = Depends(get_token_from_header)
+        ) -> TaskResponse:
+        
+    logger.info(f"Starting calculating fi model id: {model_id}")
+
+    task_id = str(uuid.uuid4())
+    task = await task_storage.create_task(task_id)
+
+    try:
+        await task_storage.update_task(
+            task_id,
+            type='CALCULATE_FI',
+            status="PREPARING_DATA",
+            model_id=model_id,
+            fitting_parameters = parameters
+        )
+        background_tasks.add_task(process_calculating_fi_task, task_id)
+
+        return TaskResponse(task_id=uuid.UUID(task_id), message="Task processing started")
+
+    except Exception as e:
+        logger.error(f"Error in calculating fi task {task_id}: {e}")
+
+        await task_storage.update_task(task_id, status="ERROR", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))       
+
+
+@router.get("/drop_fi")
+async def drop_fi(
         model_id: str = Query(),     
         authenticated: bool = Depends(check_token),
         token: str = Depends(get_token_from_header),
-        X: list[RawqDataStr] = Body()) -> list[RawqDataStr]:
-    
+        ) -> str:
+    try:
+        model = model_manager.get_model(model_id)
+        await post_processor.drop_fi(model)
+        
+        return 'Model id={} fi dropped sucessfully'.format(model_id)
+    except Exception as e:
+        logger.error(f"Error in dropping fi: {e}")
+        raise HTTPException(status_code=500, detail=str(e))  
+
+
+@router.post("/predict", response_model=list[RawDataStr])
+async def predict(   
+        model_id: str = Query(),     
+        authenticated: bool = Depends(check_token),
+        token: str = Depends(get_token_from_header),
+        X: list[RawDataStr] = Body()) -> list[RawDataStr]:
+
+    try:
         model = model_manager.get_model(model_id)
         
         if not model:
@@ -306,21 +386,24 @@ async def predict(
         for row in X:
             data.append(row.model_dump())
 
-        result_data = await model.predict(data, db_name)
+        result_data = await model.predict(data)
         result = []
         for row in result_data:
-            result.append(RawqDataStr.model_validate(row))
+            result.append(RawDataStr.model_validate(row))
         return  result
+    
+    except Exception as e:
+        logger.error(f"Error in predicting: {e}")
+        raise HTTPException(status_code=500, detail=str(e))       
 
 
-@router.get("/{db_name}/get_model_info")
+@router.get("/get_model_info")
 async def get_model_info(
-        db_name: str = Path(),
         model_id: str = Query(),     
         authenticated: bool = Depends(check_token),
         token: str = Depends(get_token_from_header),
         ) -> Optional[ModelInfo]:
-    
+    try:
         model = model_manager.get_model(model_id)
 
         if not model:
@@ -332,16 +415,49 @@ async def get_model_info(
             return result
         
         return ModelInfo.model_validate(result)
+    except Exception as e:
+        logger.error(f"Error in getting model info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))  
 
 
-@router.get("/{db_name}/delete_model")
+@router.get("/get_feature_importances")
+async def get_feature_importances(
+        model_id: str = Query(),     
+        authenticated: bool = Depends(check_token),
+        token: str = Depends(get_token_from_header),
+        ) -> FeatureImportances:
+    try:
+        model = model_manager.get_model(model_id)
+        
+        result = await post_processor.get_feature_importances(model)
+        
+        return FeatureImportances.model_validate(result)
+    except Exception as e:
+        logger.error(f"Error in getting fi: {e}")
+        raise HTTPException(status_code=500, detail=str(e))  
+
+
+@router.get("/delete_model")
 async def delete_model(
-        db_name: str = Path(),
         model_id: str = Query(),     
         authenticated: bool = Depends(check_token),
         token: str = Depends(get_token_from_header),
         ) -> str:
-    
+    try:
         await model_manager.delete_model(model_id)
         
         return 'Model id={} deleted sucessfully'.format(model_id)
+    except Exception as e:
+        logger.error(f"Error in deleting model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))      
+    
+
+@router.post("/get_sensitivity_analysis")
+async def get_sensivity_analysis(
+        model_id: str = Query(),     
+        authenticated: bool = Depends(check_token),
+        token: str = Depends(get_token_from_header),
+        sa_data: SAData = Body()) -> list[RawDataStr]:
+    
+
+    return sa_data.data

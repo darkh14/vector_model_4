@@ -1,8 +1,9 @@
 from db import db_processor
 from typing import Optional, Dict
-from sklearn.pipeline import Pipeline
-from data_processing import data_validator, Reader, RowToColumn, Checker, NanProcessor, Shuffler
-from entities import ModelStatuses, ModelTypes
+from data_processing import data_procesor, data_validator, convert_dates_in_db_filter
+from entities import ModelStatuses, ModelTypes, FIStatuses
+from post_processing import post_processor
+from errors import AlsoCalculatingException
 
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.linear_model import LinearRegression
@@ -36,6 +37,9 @@ class Model:
         self.status = ModelStatuses.CREATED
         self.error_text = ''
         self.initialized = False
+        self.fi_status = FIStatuses.NOT_CALCULATED
+        self.fi_error_text = ''
+        self.feature_importances = {}  
 
     async def initialize(self, parameters=None):
 
@@ -57,10 +61,16 @@ class Model:
         if model_parameters is not None:
             model_parameters['data_filter'] = pickle.loads(model_parameters['data_filter'])
             self.parameters = model_parameters
-            status = model_parameters.get('status') or 'created'
+            status = model_parameters.get('status') or 'CREATED'
+            fi_status = model_parameters.get('fi_status') or 'NOT_CALCULATED'
             model_type = model_parameters.get('model_type')
             self.status = ModelStatuses(status)
+            self.fi_status = FIStatuses(fi_status)
             self.model_type = ModelTypes(model_type) if model_type else None
+            self.error_text = model_parameters['error_text']
+            self.fi_error_text = model_parameters['fi_error_text'] 
+
+            self.feature_importances = model_parameters['feature_importances']         
 
             model_bin = model_parameters['model']
             scaler_bin = model_parameters['scaler']
@@ -78,6 +88,9 @@ class Model:
     async def fit(self, data_filter: Optional[dict] = None):
         
         try:
+            if self.status == ModelStatuses.FITTING:
+                raise AlsoCalculatingException('Model is fitting now!')
+            
             if not self.status in [ModelStatuses.CREATED, ModelStatuses.ERROR, ModelStatuses.READY]:
                 raise ValueError('Model is not ready to be fit!')
 
@@ -85,23 +98,17 @@ class Model:
                 self.initialized = False
                 self.initialize(self.parameters)              
 
-            self.status = ModelStatuses.FITTING           
+            self.status = ModelStatuses.FITTING
+            self.error_text = ''
+            self.fi_error_text = ''
+            self.fi_status = FIStatuses.NOT_CALCULATED
+
+            self.feature_importances = {}         
 
             logger.info("Reading data from db. Мodel id={}".format(self.model_id))
-            X_y = await Reader().read(data_filter)
-            logger.info("Transforming and checking data. Мodel id={}".format(self.model_id))
-            pipeline = Pipeline([
-                                ('checker', Checker(self.parameters)),
-                                ('row_column_transformer', RowToColumn(self.parameters)),
-                                ('nan_processor', NanProcessor(self.parameters)),
-                                ('shuffler', Shuffler(self.parameters)),
-                                ('scaler', Scaler(self.parameters)),
-                                ])
+            self.scaler = Scaler(self.parameters)
 
-            self.scaler = pipeline.named_steps['scaler']
-
-            X_y = pipeline.fit_transform(X_y, [])
-
+            X_y = await data_procesor.get_dataset(self.model_id, self.scaler, self.parameters, data_filter)
             X, y = X_y[self.parameters['x_columns']].to_numpy(), X_y[self.parameters['y_columns']].to_numpy()
 
             logger.info("Fitting model. Мodel id={}".format(self.model_id))
@@ -112,9 +119,12 @@ class Model:
             await self.write_to_db()
             self.status = ModelStatuses.READY
             logger.info("Fitting model is finished. Мodel id={}".format(self.model_id))
-
+        
+        except AlsoCalculatingException as e:
+            raise e
         except Exception as e:
             self.status = ModelStatuses.ERROR
+            self.fi_status= FIStatuses.NOT_CALCULATED
             self.error_text = str(e)
 
             await self.write_to_db()
@@ -122,7 +132,7 @@ class Model:
 
         return True
 
-    async def predict(self, X, accounting_db=''):
+    async def predict(self, X):
 
         logger.info("Сhecking x data. Мodel id={}".format(self.model_id))
         data_validator.validate_raw_data(X)
@@ -132,15 +142,7 @@ class Model:
 
         descr = self.get_aux_columns_descr(X)
 
-        pipeline = Pipeline([
-                            ('checker', Checker(self.parameters, for_predict=True)),
-                            ('row_column_transformer', RowToColumn(self.parameters, for_predict=True)),
-                            ('nan_processor', NanProcessor(self.parameters, for_predict=True)),
-                            ('shuffler', Shuffler(self.parameters, for_predict=True)),
-                            ('scaler', self.scaler),
-                             ])
-
-        X = pipeline.transform(X)
+        X = await data_procesor.transform_dataset(X, self.model_id, self.scaler, self.parameters)
 
         logger.info("Predicting. Мodel id={}".format(self.model_id))
 
@@ -148,11 +150,12 @@ class Model:
         X[self.parameters['y_columns']] = y
 
         logger.info("Reverse transforming result data. Мodel id={}".format(self.model_id))
+        pipeline = data_procesor.fit_pipelines[self.model_id]
         row_column_transformer = pipeline.named_steps['row_column_transformer']
         row_column_transformer.only_outers = True
         y = row_column_transformer.inverse_transform(X)
         
-        y = await self.add_aux_columns_to_y_data(y, dims_descr=descr, accounting_db=accounting_db)
+        y = await self.add_aux_columns_to_y_data(y, dims_descr=descr)
 
         y = y.to_dict(orient='records')
 
@@ -173,8 +176,9 @@ class Model:
 
         return dims
 
-    async def add_aux_columns_to_y_data(self, data, dims_descr, accounting_db):
+    async def add_aux_columns_to_y_data(self, data, dims_descr):
 
+        data_filter = self.parameters.get('data_filter')
         all_columns = ['period']
         aux_columns = []
         indicators = []
@@ -193,7 +197,9 @@ class Model:
         all_columns.append('ind_name')
 
         aux_columns.append('ind_kind')
-        aux_columns.append('ind_name')   
+        aux_columns.append('ind_name')
+
+        all_columns.append('accounting_db')  
 
         nums = []
 
@@ -234,31 +240,46 @@ class Model:
             if not indicator_settings['outer']:
                 continue
             
-            data_row = await db_processor.find_one('raw_data', {'accounting_db': accounting_db, 'ind_id': indicator_settings['id']})
-            c_ind = {'kind': data_row['ind_kind'], 'name': data_row['ind_name']}            
+            if not data_filter:
+                c_data_filter = {}
+            else:
+                c_data_filter = convert_dates_in_db_filter(data_filter.copy())
 
-            inds[indicator_settings['id']] = c_ind
+            c_data_filter['ind_id'] = indicator_settings['id']
 
-            for num in indicator_settings['numbers']:
-                if num not in nums:
-                    nums[num] = {'kind': data_row['{}_kind'.format(num)]}
+            data_row = await db_processor.find_one('raw_data', c_data_filter)
+            if data_row:
+                c_ind = {'kind': data_row['ind_kind'], 'name': data_row['ind_name']}            
+
+                inds[indicator_settings['id']] = c_ind
+
+                for num in indicator_settings['numbers']:
+                    if num not in nums:
+                        nums[num] = {'kind': data_row['{}_kind'.format(num)]}
 
             if indicator_settings['analytics']:
-                data_filter = {'accounting_db': accounting_db, 'ind_id': indicator_settings['id']}
+
+                if not data_filter:
+                    c_data_filter = {}
+                else:
+                    c_data_filter = convert_dates_in_db_filter(data_filter.copy()) 
+
+                c_data_filter['ind_id'] = indicator_settings['id']
                 for an in indicator_settings['analytics']:
-                    data_filter['{}_id'.format(an)] = {'$in': list(data['{}_id'.format(an)].unique())}
+                    c_data_filter['{}_id'.format(an)] = {'$in': list(data['{}_id'.format(an)].unique())}
                 
-                data_rows = await db_processor.find('raw_data', data_filter)
-                
-                for an in indicator_settings['analytics']:
-                    c_an = ans.get(an) or {}
-                    for row in data_rows:
-                        if row['{}_id'.format(an)] not in c_an:
-                            c_an[row['{}_id'.format(an)]] = {'name': row['{}_name'.format(an)], 'kind': row['{}_kind'.format(an)]}
-                    ans[an] = c_an
+                data_rows = await db_processor.find('raw_data', c_data_filter)
+
+                if data_rows:
+                    for an in indicator_settings['analytics']:
+                        c_an = ans.get(an) or {}
+                        for row in data_rows:
+                            if row['{}_id'.format(an)] not in c_an:
+                                c_an[row['{}_id'.format(an)]] = {'name': row['{}_name'.format(an)], 'kind': row['{}_kind'.format(an)]}
+                        ans[an] = c_an
                     
-        data['ind_kind'] = data['ind_id'].apply(lambda x: inds[x]['kind'])
-        data['ind_name'] = data['ind_id'].apply(lambda x: inds[x]['name'])   
+        data['ind_kind'] = data['ind_id'].apply(lambda x: inds[x].get('kind', ''))
+        data['ind_name'] = data['ind_id'].apply(lambda x: inds[x].get('name', ''))   
 
         for num, num_setting in nums.items():
             data['{}_kind'.format(num)] = num_setting['kind'] 
@@ -266,6 +287,12 @@ class Model:
         for an, descr in ans.items():
             data['{}_kind'.format(an)] = data['{}_id'.format(an)].apply(lambda x: descr.get(x, {}).get('kind', ''))
             data['{}_name'.format(an)] = data['{}_id'.format(an)].apply(lambda x: descr.get(x, {}).get('name', ''))  
+
+        data_row = await db_processor.find_one('raw_data', data_filter)
+        if data_row:
+            data['accounting_db'] = data_row['accounting_db']
+        else:
+            data['accounting_db'] = ''           
 
         data = data[all_columns]
 
@@ -276,12 +303,18 @@ class Model:
         parameters_to_db = self.parameters.copy() if self.parameters else {}
         parameters_to_db['data_filter'] = pickle.dumps(parameters_to_db['data_filter']) if parameters_to_db['data_filter'] else b''
         parameters_to_db['status'] = self.status.value
+        parameters_to_db['fi_status'] = self.fi_status.value        
         parameters_to_db['model_type'] = self.model_type.value if self.model_type else ''
 
         model_bin = self.ml_model.get_binary() if self.ml_model else None
         scaler_bin = self.scaler.get_binary() if self.scaler else None
         parameters_to_db['model'] = model_bin
         parameters_to_db['scaler'] = scaler_bin
+
+        parameters_to_db['error_text'] = self.error_text
+        parameters_to_db['fi_error_text'] = self.fi_error_text
+
+        parameters_to_db['feature_importances'] = self.feature_importances       
 
         await db_processor.insert_one('models', parameters_to_db, {'model_id': self.model_id})
 
@@ -303,6 +336,9 @@ class Model:
                 result['columns_descriptions'].append(descr)
 
         result['status'] = self.status.value
+        result['fi_status'] = self.fi_status.value
+        result['error_text'] = self.error_text
+        result['fi_error_text'] = self.fi_error_text        
         return result
 
     async def delete(self):
@@ -313,7 +349,10 @@ class Model:
         self.ml_model = None
         self.scaler = None
         self.status = ModelStatuses.CREATED
+        self.fi_status = FIStatuses.NOT_CALCULATED
+        self.feature_importances = {}
         self.error_text = ''
+        self.fi_error_text = ''
         self.initialized = False
 
     def _get_ml_model(self, model_type, parameters):
@@ -370,6 +409,7 @@ class ModelManager:
 
         self.models = [el for el in self.models if el['model_id'] != model_id]
         await model.delete()
+
 
 class Scaler:
 

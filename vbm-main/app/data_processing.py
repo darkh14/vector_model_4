@@ -7,13 +7,14 @@ import pandas as pd
 from config import TEMP_FOLDER
 import json
 from db import db_processor
-from entities import RawqDataStr
+from entities import RawDataStr
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import InitErrorDetails
 from typing import List
 from collections import defaultdict
 from datetime import datetime
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.pipeline import Pipeline
 import asyncio
 import uuid 
 
@@ -51,13 +52,12 @@ class DataLoader:
         data = data_validator.validate_raw_data(json_data)
 
         pd_data = pd.DataFrame(data) 
-        pd_data['accounting_db'] = task.accounting_db
 
         data = pd_data.to_dict(orient='records')
 
         logger.info("writing data to db")
         await task_storage.update_task(task.task_id, status="WRITING _TO_DB", progress=60)          
-        db_processor.set_accounting_db(task.accounting_db)
+
         if task.replace:
             await db_processor.delete_many('raw_data')
 
@@ -72,15 +72,11 @@ class DataLoader:
         with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
             zip_ref.extractall(folder)
 
-    async def delete_data(self, accounting_db='', db_filter=None):
-        db_processor.set_accounting_db(accounting_db)
+    async def delete_data(self, data_filter=None):
+        await db_processor.delete_many('raw_data',  db_filter=convert_dates_in_db_filter(data_filter))
 
-        await db_processor.delete_many('raw_data',  db_filter=db_filter)
-
-    async def get_data_count(self,  accounting_db='', db_filter=None):
-        db_processor.set_accounting_db(accounting_db)
-
-        result = await db_processor.get_count('raw_data',  db_filter=db_filter)
+    async def get_data_count(self,  data_filter=None):
+        result = await db_processor.get_count('raw_data',  db_filter=convert_dates_in_db_filter(data_filter))
         return result
 
 
@@ -88,15 +84,15 @@ class DataValidator:
 
     def validate_raw_data(self, data):
 
-        adapter = TypeAdapter(List[RawqDataStr])
+        adapter = TypeAdapter(List[RawDataStr])
         all_errors = defaultdict(list)
         results = []
-        model_fields = set(RawqDataStr.model_fields.keys())
+        model_fields = set(RawDataStr.model_fields.keys())
 
         for index, item in enumerate(data):
             try:
              
-                extra_fields = {k: v for k, v in item.items() if k not in model_fields or k=='period'}
+                extra_fields = {k: v for k, v in item.items() if k not in model_fields or k in ['period', 'accounting_db']}
 
                 self.validate_fields(extra_fields)
 
@@ -132,6 +128,8 @@ class DataValidator:
         for field, value in fields_dict.items():
             if field == 'period':
                 fields_dict['period'] = datetime.strptime(value, '%d.%m.%Y')
+            elif field == 'accounting_db':
+                pass
             elif field.startswith('ind_'):
                 field_parts = field.split('_') 
                 if len(field_parts) != 2:
@@ -222,6 +220,51 @@ class DataValidator:
 
 
         return fields_dict
+
+
+class DataProcessor:
+
+    def __init__(self):
+        self.fit_pipelines = {}
+
+    async def get_dataset(self, model_id, scaler, parameters, data_filter=None):
+        logger.info("Reading data from db. Мodel id={}".format(model_id))
+        X_y = await Reader().read(data_filter)
+        logger.info("Transforming and checking data. Мodel id={}".format(model_id))
+
+        pipeline = self.get_fit_pipeline(scaler, parameters)
+
+        X_y = pipeline.fit_transform(X_y, [])
+        self.fit_pipelines[model_id] = pipeline
+        return X_y
+    
+    async def transform_dataset(self, dataset, model_id, scaler, parameters):
+        pipeline = self.fit_pipelines.get(model_id)
+        if not pipeline:
+            pipeline = self.get_fit_pipeline(scaler, parameters)
+            self.fit_pipelines[model_id] = pipeline
+
+        for name, step in pipeline.steps:
+            step.for_predict = True
+
+        X = pipeline.transform(dataset)
+
+        for name, step in pipeline.steps:
+            step.for_predict = False        
+
+        return X
+    
+    def get_fit_pipeline(self, scaler, parameters, for_predict=False):
+
+        pipeline = Pipeline([
+                    ('checker', Checker(parameters)),
+                    ('row_column_transformer', RowToColumn(parameters)),
+                    ('nan_processor', NanProcessor(parameters)),
+                    ('shuffler', Shuffler(parameters)),
+                    ('scaler', scaler),
+                    ])
+        
+        return pipeline    
 
 
 class Reader:
@@ -407,10 +450,11 @@ class RowToColumn(BaseEstimator, TransformerMixin):
 
             num_to_rename['{}_value'.format(num_name)] = column_name   
 
-            if indicator_settings['outer']:
-                self.y_columns.append(column_name)
-            else:
-                self.x_columns.append(column_name)
+            if not self.for_predict:
+                if indicator_settings['outer']:
+                    self.y_columns.append(column_name)
+                else:
+                    self.x_columns.append(column_name)
 
             c_columns.append(column_name)
             
@@ -504,7 +548,10 @@ class Shuffler(BaseEstimator, TransformerMixin):
         return self
     
     def transform(self, x: pd.DataFrame) -> pd.DataFrame:
-        return x.sample(frac=1).reset_index(drop=True).copy()
+        if self.for_predict:
+            return x
+        else:
+            return x.sample(frac=1).reset_index(drop=True).copy()
 
 
 def convert_dates_in_db_filter(db_filter, is_period=False):
@@ -527,5 +574,6 @@ def convert_dates_in_db_filter(db_filter, is_period=False):
     return result
 
 
+data_procesor = DataProcessor()
 data_loader = DataLoader()
 data_validator = DataValidator()

@@ -14,7 +14,7 @@ from entities import TaskData, StatusResponse, ProcessingTaskResponse
 logger = logging.getLogger(__name__)
 
 
-class TaskStorage:
+class TaskStorage:    
     """Управление задачами и файлами."""
 
     def __init__(self):
@@ -30,9 +30,8 @@ class TaskStorage:
             return task
 
     async def get_task(self, task_id: str) -> Optional[TaskData]:
-        """Получает данные задачи."""
-        return self.tasks.get(task_id)
-    
+        return self.tasks.get(task_id)                 
+
     async def get_processing_tasks(self, accounting_db: str='') -> List[ProcessingTaskResponse]:
         """Получает данные всех задач."""
         all_tasks = [el for el in self.tasks.values() if el.model_dump().get('status') not in ['READY', 'ERROR']]

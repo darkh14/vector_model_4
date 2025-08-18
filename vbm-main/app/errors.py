@@ -1,0 +1,2 @@
+class AlsoCalculatingException(Exception):
+    pass

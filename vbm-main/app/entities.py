@@ -11,6 +11,13 @@ class ModelStatuses(Enum):
     ERROR = 'ERROR'
 
 
+class FIStatuses(Enum):
+    NOT_CALCULATED = 'NOT_CALCULATED'
+    CALCULATING = 'CALCULATING'    
+    CALCULATED = 'CALCULATED'
+    ERROR = 'ERROR'    
+
+
 class ModelTypes(Enum):
     pf = 'pf'
     nn = 'nn'    
@@ -66,7 +73,6 @@ class TaskData(BaseModel):
     start_time: Optional[float] = None
     end_time: Optional[float] = None
     error: Optional[str] = None
-    accounting_db: Optional[str] = None
     replace: Optional[bool] = False
     model_id: Optional[str] = None
     model_type: Optional[ModelTypes] = None
@@ -76,8 +82,9 @@ class TaskData(BaseModel):
     file_path: Optional[str] = None
 
 
-class RawqDataStr(BaseModel, extra='allow'):
+class RawDataStr(BaseModel, extra='allow'):
     period: str
+    accounting_db: str
 
 
 class ColumnDescription(BaseModel):
@@ -91,4 +98,20 @@ class ModelInfo(BaseModel):
     model_id: str
     columns_descriptions: list[ColumnDescription]
     status: ModelStatuses
+    fi_status: FIStatuses
+    error_text: str
+    fi_error_text: str   
 
+
+class FeatureImportances(BaseModel):
+    fi: dict[str, float]
+    descr: dict[str, dict] 
+
+
+class SAData(BaseModel):
+    data: list[RawDataStr]
+    deviations: list[float]
+    input_indicators: list[str]
+    output_indicator: str
+    get_graph: bool
+    auto_selection_number: int

@@ -15,19 +15,6 @@ class DBProcessor:
         self.master_db_name = 'vbm'
         self.db = None
         self._connection: Optional[AsyncIOMotorClient] = None
-        self.accounting_db = ''
-
-    def set_accounting_db(self, accounting_db):
-        self.accounting_db = accounting_db
-
-    def set_accounting_db_filter(self, db_filter):
-        if self.accounting_db:
-            if db_filter:
-                db_filter['accounting_db'] = self.accounting_db
-            else:
-                db_filter = {'accounting_db': self.accounting_db}
-
-        return db_filter
 
     async def connect(self, url, timeout) -> bool:
         self.url = url
@@ -66,7 +53,6 @@ class DBProcessor:
         collection = self._get_collection(collection_name)
 
         db_filter = db_filter or None
-        db_filter = self.set_accounting_db_filter(db_filter)
 
         result = await collection.find_one(db_filter, projection={'_id': False})
 
@@ -87,7 +73,6 @@ class DBProcessor:
         collection = self._get_collection(collection_name)
 
         db_filter = db_filter or None
-        db_filter = self.set_accounting_db_filter(db_filter)
         if db_filter:
             result = await collection.replace_one(db_filter, value, upsert=True)
         else:
@@ -106,13 +91,12 @@ class DBProcessor:
     async def delete_many(self, collection_name: str, db_filter=None) -> bool:
         
         db_filter = db_filter or None
-        db_filter = self.set_accounting_db_filter(db_filter)
         if db_filter:
             collection = self._get_collection(collection_name)
             result = await collection.delete_many(db_filter)
             result = bool(getattr(result, 'acknowledged'))
         else:
-            result = await self._db.drop_collection(collection_name)
+            result = await self.db.drop_collection(collection_name)
             result = result is not None
 
         return result
@@ -124,7 +108,6 @@ class DBProcessor:
         :return: number of lines in collection
         """
         db_filter = db_filter or {}
-        db_filter = self.set_accounting_db_filter(db_filter)
         collection = self._get_collection(collection_name)
 
         return await collection.count_documents(db_filter)
