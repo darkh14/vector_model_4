@@ -377,7 +377,7 @@ class ModelManager:
             model = Model(model_id, model_type=model_type) 
             self.models.append({'model_id': model_id, 'model_type': model_type, 'model': model})     
         else:
-            model = None  
+            raise ValueError('Model with id "{}" is not defined'.format(model_id))  
         
         return model
 

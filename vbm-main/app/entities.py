@@ -108,10 +108,61 @@ class FeatureImportances(BaseModel):
     descr: dict[str, dict] 
 
 
-class SAData(BaseModel):
+class SAInputData(BaseModel):
     data: list[RawDataStr]
     deviations: list[float]
     input_indicators: list[str]
     output_indicator: str
     get_graph: bool
     auto_selection_number: int
+
+
+class SARow(BaseModel):
+    ind_id: str
+    ind_kind: str
+    coef: float
+    value: float
+    value_0: float
+    delta: float
+    relative_delta: float
+
+
+class SAOutputData(BaseModel):
+    data: list[SARow]
+    graph: str
+
+
+class FAScenario(BaseModel):
+    id: str
+    name: str
+    value: float
+
+
+class FAScenarios(BaseModel):
+    base: FAScenario
+    calculated: FAScenario
+
+
+class FAInputData(BaseModel):
+    data: list[RawDataStr]
+    scenarios: FAScenarios
+    input_indicators: list[str]
+    output_indicator: str
+    get_graph: bool
+
+
+class FARow(BaseModel):
+    ind_id: str
+    ind_kind: str
+    value: float
+
+
+class FAOutputData(BaseModel):
+    data: list[FARow]
+    graph: str
+
+
+
+
+
+

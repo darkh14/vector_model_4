@@ -1,10 +1,7 @@
 import uuid
-# import shutil
 import logging
-# from pathlib import Path
 from fastapi import APIRouter, Header, HTTPException, BackgroundTasks, File, UploadFile, Depends, Query, Path, Body
-# from fastapi.responses import FileResponse
-from typing import Optional, Annotated
+from typing import Optional
 
 import config
 from entities import (HealthResponse, 
@@ -16,14 +13,18 @@ from entities import (HealthResponse,
                       ModelInfo,
                       ModelTypes,
                       FeatureImportances, 
-                      SAData)
+                      SAInputData,
+                      SAOutputData,
+                      SARow,
+                      FAInputData,
+                      FAOutputData,
+                      FARow)
 
 from storage import task_storage
 from data_processing import data_loader
 from models import Model, model_manager
 from post_processing import post_processor
 
-# from statistic import write_log_event, get_token_from_header
 from cachetools import TTLCache
 import aiohttp
 import asyncio
@@ -33,7 +34,6 @@ router = APIRouter()
 
 logging.getLogger("vbm_api_logger").setLevel(logging.ERROR)
 
-# Кэш на 1000 токенов, срок жизни — 300 секунд
 auth_cache = TTLCache(maxsize=1000, ttl=300)
 
 
@@ -457,7 +457,40 @@ async def get_sensivity_analysis(
         model_id: str = Query(),     
         authenticated: bool = Depends(check_token),
         token: str = Depends(get_token_from_header),
-        sa_data: SAData = Body()) -> list[RawDataStr]:
+        sa_data: SAInputData = Body()) -> SAOutputData:
     
+    model = model_manager.get_model(model_id)
+    data_dict = sa_data.model_dump()
 
-    return sa_data.data
+    result_data, result_html = await post_processor.get_sa(model, data_dict['data'], 
+                                    data_dict['input_indicators'], 
+                                    data_dict['output_indicator'],
+                                    data_dict['deviations'],
+                                    data_dict['auto_selection_number'],
+                                    data_dict['get_graph'])
+    data = []
+    for row in result_data:
+        data.append(SARow.model_validate(row))
+    return  SAOutputData.model_validate({'data': data, 'graph': result_html})
+
+
+@router.post("/get_factor_analysis")
+async def get_factor_analysis(
+        model_id: str = Query(),     
+        authenticated: bool = Depends(check_token),
+        token: str = Depends(get_token_from_header),
+        fa_data: FAInputData = Body()) -> FAOutputData:
+    
+    model = model_manager.get_model(model_id)
+    data_dict = fa_data.model_dump()
+
+    result_data, result_html = await post_processor.get_fa(model, 
+                                    data_dict['data'], 
+                                    data_dict['scenarios'],                                    
+                                    data_dict['input_indicators'], 
+                                    data_dict['output_indicator'],
+                                    data_dict['get_graph'])
+    data = []
+    for row in result_data:
+        data.append(FARow.model_validate(row))
+    return  FAOutputData.model_validate({'data': data, 'graph': result_html})
