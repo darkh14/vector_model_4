@@ -342,7 +342,7 @@ class GraphProcessor:
     def __init__(self):
         pass
 
-    def get_sa_graph(self, model, dataset: pd.DataFrame, indicators_descr) -> str:
+    def get_sa_graph(self, dataset: pd.DataFrame, indicators_descr) -> str:
         """
         Forms sensitivity analysis graph html
         @param graph_data: sensitivity analysis data
