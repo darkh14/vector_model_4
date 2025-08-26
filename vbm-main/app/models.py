@@ -5,12 +5,13 @@ from entities import ModelStatuses, ModelTypes, FIStatuses
 from post_processing import post_processor
 from errors import AlsoCalculatingException
 
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, PolynomialFeatures
 from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import PolynomialFeatures
+from sklearn.metrics import mean_squared_error
 
 import asyncio
 import pandas as pd
+import numpy as np
 import pickle
 from abc import ABC, abstractmethod
 from keras.models import Sequential, load_model
@@ -19,6 +20,9 @@ from keras.optimizers import Adam
 import tempfile
 import logging
 from datetime import datetime
+from uuid import uuid4
+import os
+from config import TEMP_FOLDER
 
 
 logging.getLogger("vbm_data_processing_logger").setLevel(logging.ERROR)
@@ -39,7 +43,8 @@ class Model:
         self.initialized = False
         self.fi_status = FIStatuses.NOT_CALCULATED
         self.fi_error_text = ''
-        self.feature_importances = {}  
+        self.feature_importances = {}
+        self.metrics = {}
 
     async def initialize(self, parameters=None):
 
@@ -70,7 +75,9 @@ class Model:
             self.error_text = model_parameters['error_text']
             self.fi_error_text = model_parameters['fi_error_text'] 
 
-            self.feature_importances = model_parameters['feature_importances']         
+            self.feature_importances = model_parameters['feature_importances'] 
+
+            self.metrics = model_parameters.get('metrics', {})    
 
             model_bin = model_parameters['model']
             scaler_bin = model_parameters['scaler']
@@ -103,7 +110,7 @@ class Model:
             self.fi_error_text = ''
             self.fi_status = FIStatuses.NOT_CALCULATED
 
-            self.feature_importances = {}         
+            self.feature_importances = {}      
 
             logger.info("Reading data from db. Мodel id={}".format(self.model_id))
             self.scaler = Scaler(self.parameters)
@@ -114,10 +121,14 @@ class Model:
             logger.info("Fitting model. Мodel id={}".format(self.model_id))
             self.ml_model = self._get_ml_model(self.model_type, self.parameters)
             self.ml_model.fit(X, y, parameters=self.parameters)
-
-            logger.info("Saving model and fitting parameters to db. Мodel id={}".format(self.model_id))
-            await self.write_to_db()
             self.status = ModelStatuses.READY
+
+            logger.info("Testing model and getting metrics. Мodel id={}".format(self.model_id))
+
+            self.metrics = self._get_metrics(X_y)
+            logger.info("Saving model and fitting parameters to db. Мodel id={}".format(self.model_id))
+
+            await self.write_to_db()            
             logger.info("Fitting model is finished. Мodel id={}".format(self.model_id))
         
         except AlsoCalculatingException as e:
@@ -207,12 +218,12 @@ class Model:
             if column_settings['outer']:
                 for an in column_settings['analytics']:
 
-                    all_columns.append['{}_id'.format(an)]
-                    all_columns.append['{}_kinde'.format(an)]
-                    all_columns.append['{}_name'.format(an)]
+                    all_columns.append('{}_id'.format(an))
+                    all_columns.append('{}_kind'.format(an))
+                    all_columns.append('{}_name'.format(an))
 
-                    aux_columns.append['{}_kinde'.format(an)]
-                    aux_columns.append['{}_name'.format(an)]     
+                    aux_columns.append('{}_kind'.format(an))
+                    aux_columns.append('{}_name'.format(an))   
                               
                 if column_settings['num'] not in nums:
                     nums.append(column_settings['num'])
@@ -314,7 +325,8 @@ class Model:
         parameters_to_db['error_text'] = self.error_text
         parameters_to_db['fi_error_text'] = self.fi_error_text
 
-        parameters_to_db['feature_importances'] = self.feature_importances       
+        parameters_to_db['feature_importances'] = self.feature_importances
+        parameters_to_db['metrics'] = self.metrics  
 
         await db_processor.insert_one('models', parameters_to_db, {'model_id': self.model_id})
 
@@ -338,7 +350,9 @@ class Model:
         result['status'] = self.status.value
         result['fi_status'] = self.fi_status.value
         result['error_text'] = self.error_text
-        result['fi_error_text'] = self.fi_error_text        
+        result['fi_error_text'] = self.fi_error_text 
+        result['metrics'] = self.metrics
+
         return result
 
     async def delete(self):
@@ -363,6 +377,40 @@ class Model:
         
         return ml_model_classes[0](parameters)
 
+    def _get_metrics(self, X_y):
+        y_true = X_y[self.parameters['y_columns']].to_numpy()
+        y_pred = self.ml_model.predict(X_y[self.parameters['x_columns']])
+
+        rmse = self._calculate_rmse(y_true, y_pred)
+        mspe = self._calculate_mspe(y_true, y_pred)
+
+        return {'RMSE': rmse, 'MSPE': mspe}
+    
+    @staticmethod
+    def _calculate_mspe(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        """
+        Calculates mean squared percentage error metric
+        :param y_true: real output data
+        :param y_pred: predicted output data
+        :return: value of calculated metric
+        """
+        eps = np.zeros(y_true.shape)
+        eps[:] = 0.0001
+        y_p = np.c_[abs(y_true), abs(y_pred), eps]
+        y_p = np.max(y_p, axis=1).reshape(-1, 1)
+
+        return np.sqrt(np.nanmean(np.square(((y_true - y_pred) / y_p))))
+
+    @staticmethod
+    def _calculate_rmse(y_true, y_pred) -> float:
+        """
+        Calculates root mean squared error metric
+        :param y_true: real output data
+        :param y_pred: predicted output data
+        :return: value of calculated metric
+        """
+        return np.sqrt(mean_squared_error(y_true, y_pred))    
+
 
 class ModelManager:
 
@@ -372,12 +420,12 @@ class ModelManager:
     def get_model(self, model_id, model_type=None):
         c_models = [el for el in self.models if el['model_id'] == model_id]
         if c_models:
-            model  = c_models[0]['model']
-        elif model_type:
-            model = Model(model_id, model_type=model_type) 
+            model  = c_models[0]['model']          
+        elif model_type:               
+            model = Model(model_id, model_type=model_type)               
             self.models.append({'model_id': model_id, 'model_type': model_type, 'model': model})     
         else:
-            raise ValueError('Model with id "{}" is not defined'.format(model_id))  
+            return None  
         
         return model
 
@@ -517,23 +565,41 @@ class NNModel(MlModel):
 
     def get_binary(self):
 
-        with tempfile.TemporaryFile(delete=False, suffix='.keras') as fp:
-            self.nn.save(fp.name)
-            fp.close()
+        # with tempfile.TemporaryFile(suffix='.keras') as fp:
+        #     self.nn.save(fp.name)
+        #     fp.close()
 
-            with open(fp.name, mode='rb') as f:
-                model_bin = f.read()
+        #     with open(fp.name, mode='rb') as f:
+        #         model_bin = f.read()
+        file_id = uuid4()
+        file_path = os.path.join(TEMP_FOLDER, '{}.keras'.format(file_id))
+        self.nn.save(file_path)
+
+        with open(file_path, mode='rb') as f:
+            model_bin = f.read()   
+
+        os.remove(file_path)     
 
         return model_bin
     
     def from_binary(self, model_bin):
 
-        with tempfile.TemporaryFile(delete=False, suffix='.keras') as fp:
-            with open(fp.name, mode='wb') as f:
-                f.write(model_bin)   
+        # with tempfile.TemporaryFile(suffix='.keras') as fp:
+        #     with open(fp.name, mode='wb') as f:
+        #         f.write(model_bin)   
                      
-            self.nn = load_model(fp.name)
-            fp.close()  
+        #     self.nn = load_model(fp.name)
+        #     fp.close() 
+
+        file_id = uuid4()
+        file_path = os.path.join(TEMP_FOLDER, '{}.keras'.format(file_id))
+        
+        with open(file_path, mode='wb') as f:
+            f.write(model_bin)
+
+        self.nn = load_model(file_path)
+
+        os.remove(file_path)
 
 
 class PfModel(MlModel):

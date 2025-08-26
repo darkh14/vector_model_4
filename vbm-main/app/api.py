@@ -127,9 +127,6 @@ async def process_fitting_task(task_id: str):
 
         result = await model.fit(task.fitting_parameters.data_filter)
 
-        if result:
-            await model.write_to_db()
-
         logger.info(f"[{task_id}] fitting task completed")
 
         await task_storage.update_task(task_id, status="READY", progress=100)
@@ -361,6 +358,9 @@ async def drop_fi(
         ) -> str:
     try:
         model = model_manager.get_model(model_id)
+        if not model:
+            raise ValueError('Model with id "{}" is not defined'.format(model_id))
+        
         await post_processor.drop_fi(model)
         
         return 'Model id={} fi dropped sucessfully'.format(model_id)
@@ -376,11 +376,11 @@ async def predict(
         token: str = Depends(get_token_from_header),
         X: list[RawDataStr] = Body()) -> list[RawDataStr]:
 
-    try:
+    # try:
         model = model_manager.get_model(model_id)
         
         if not model:
-            raise ValueError('Model id "{}" not found'.format(model_id))
+            raise ValueError('Model with id "{}" is not defined'.format(model_id))
 
         data = []
         for row in X:
@@ -392,9 +392,9 @@ async def predict(
             result.append(RawDataStr.model_validate(row))
         return  result
     
-    except Exception as e:
-        logger.error(f"Error in predicting: {e}")
-        raise HTTPException(status_code=500, detail=str(e))       
+    # except Exception as e:
+    #     logger.error(f"Error in predicting: {e}")
+    #     raise HTTPException(status_code=500, detail=str(e))       
 
 
 @router.get("/get_model_info")
@@ -428,6 +428,8 @@ async def get_feature_importances(
         ) -> FeatureImportances:
     try:
         model = model_manager.get_model(model_id)
+        if not model:
+            raise ValueError('Model with id "{}" is not defined'.format(model_id))        
         
         result = await post_processor.get_feature_importances(model)
         
@@ -460,6 +462,9 @@ async def get_sensivity_analysis(
         sa_data: SAInputData = Body()) -> SAOutputData:
     
     model = model_manager.get_model(model_id)
+    if not model:
+        raise ValueError('Model with id "{}" is not defined'.format(model_id))
+
     data_dict = sa_data.model_dump()
 
     result_data, result_html = await post_processor.get_sa(model, data_dict['data'], 
@@ -482,6 +487,9 @@ async def get_factor_analysis(
         fa_data: FAInputData = Body()) -> FAOutputData:
     
     model = model_manager.get_model(model_id)
+    if not model:
+        raise ValueError('Model with id "{}" is not defined'.format(model_id))
+
     data_dict = fa_data.model_dump()
 
     result_data, result_html = await post_processor.get_fa(model, 

@@ -1,4 +1,8 @@
-FROM python:3.12
+FROM python:3.11
+
+
+RUN mkdir -p /data/source
+RUN mkdir -p /data/temp
 
 WORKDIR /app
 

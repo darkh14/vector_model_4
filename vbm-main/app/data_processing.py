@@ -127,7 +127,10 @@ class DataValidator:
         errors = []
         for field, value in fields_dict.items():
             if field == 'period':
-                fields_dict['period'] = datetime.strptime(value, '%d.%m.%Y')
+                if isinstance(value, str):
+                    fields_dict['period'] = datetime.strptime(value, '%d.%m.%Y')
+                else:
+                    fields_dict['period'] = value
             elif field == 'accounting_db':
                 pass
             elif field.startswith('ind_'):
@@ -303,6 +306,7 @@ class RowToColumn(BaseEstimator, TransformerMixin):
         self.columns_descriptions = {}
         self.analytic_key_settings = {}
         self.only_outers = False
+        self.boundaries = []
 
     def fit(self, X, y=None):
         return self
@@ -312,13 +316,14 @@ class RowToColumn(BaseEstimator, TransformerMixin):
         data = X.loc[X['ind_id'].isin(indicators)].copy()
         data['analytic_key'] = data.apply(self._get_analytic_key_from_row, axis=1)
         result_data = self._group_data_with_dims(data)
+        self.boundaries = self._get_boundaries()
 
         for indicator_ind, indicator in enumerate(indicators):
 
             indicator_settings = [el for el in self.parameters['indicators'] if el['id']==indicator][0]
             analytic_kinds = indicator_settings['analytics']
 
-            if self.for_predict and indicator_settings['outer']:
+            if self.for_predict and indicator_settings['outer'] and not indicator_settings['use_boundaries']:
                 continue            
 
             if analytic_kinds:
@@ -394,11 +399,12 @@ class RowToColumn(BaseEstimator, TransformerMixin):
             column_name = self._get_column_name(indicator_ind, num_name)
 
             num_to_rename['{}_value'.format(num_name)] = column_name   
-
-            if indicator_settings['outer']:
-                self.y_columns.append(column_name)
-            else:
-                self.x_columns.append(column_name)
+            
+            if not self.for_predict:
+                if indicator_settings['outer']:
+                    self.y_columns.append(column_name)
+                else:
+                    self.x_columns.append(column_name)
 
             c_columns.append(column_name)
 
@@ -428,7 +434,11 @@ class RowToColumn(BaseEstimator, TransformerMixin):
         columns = to_group + ['{}_value'.format(el) for el in indicator_settings['numbers']]
         ind_data = initial_data[columns].loc[initial_data['ind_id']==indicator_settings['id']].groupby(to_group, as_index=False).sum() 
 
-        an_keys = sorted(list(ind_data['analytic_key'].unique()))
+        if self.for_predict:
+            an_keys = [el['analytic_key'] for el in self.parameters['columns_descriptions'].values() if el['indicator_id'] == indicator_settings['id']]
+            an_keys = sorted(list(an_keys))
+        else:
+            an_keys = sorted(list(ind_data['analytic_key'].unique()))
 
         for an_ind, an_key in enumerate(an_keys):
             result_data = self._add_analytic_value_columns_to_data(result_data, ind_data, indicator_settings, indicator_ind, an_key, an_ind)
@@ -449,21 +459,29 @@ class RowToColumn(BaseEstimator, TransformerMixin):
             column_name = self._get_column_name(indicator_ind, num_name, analytic_ind)
 
             num_to_rename['{}_value'.format(num_name)] = column_name   
+            
+            bounds = [el for el in self.boundaries if el['ind'] == indicator_settings['id'] and el['an_key'] == analytic_key]
 
             if not self.for_predict:
-                if indicator_settings['outer']:
+
+                is_y = (indicator_settings['outer'] and (not indicator_settings['use_boundaries'] or (indicator_settings['use_boundaries'] and bounds)))
+
+                if is_y:
                     self.y_columns.append(column_name)
                 else:
                     self.x_columns.append(column_name)
+            else:
+                if indicator_settings['outer'] and indicator_settings['use_boundaries'] and bounds:
+                    return result_data
 
             c_columns.append(column_name)
-            
 
             self.columns_descriptions[column_name] = {'indicator_id': indicator_settings['id'], 
                                                     'analytics': self.analytic_key_settings[analytic_key],
                                                     'analytic_key': analytic_key,
                                                     'period_shift': 0,
                                                     'num': num_name,
+                                                    'use_boundaries': indicator_settings['use_boundaries'],
                                                     'outer': indicator_settings['outer']}
         
         an_data = an_data.rename(num_to_rename, axis=1)
@@ -511,6 +529,19 @@ class RowToColumn(BaseEstimator, TransformerMixin):
             return 'ind_{}_an_{}_{}'.format(indicator_ind, analytic_ind, num_name)
         else:
             return 'ind_{}_{}'.format(indicator_ind, num_name)
+
+    def _get_boundaries(self):
+        in_boundaries = self.parameters.get('boundaries')
+        boundaries = []
+        if in_boundaries:
+            for ind, bounds in in_boundaries.items():
+                for bound in bounds:
+                    row = {'ind_id': ind}
+                    row.update(bound)
+                    an_key = self._get_analytic_key_from_row(row)
+                    boundaries.append({'ind': ind, 'an_key': an_key})
+
+        return boundaries
 
 
 class NanProcessor(BaseEstimator, TransformerMixin):

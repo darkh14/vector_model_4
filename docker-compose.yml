@@ -1,24 +1,35 @@
-x-common: &common
-  restart: unless-stopped
-  env_file: .env
-
 services:
   vbm-auth:
-    image: vbm-auth
+    image: darkh14/vbm_auth:latest
     build:
       context: ./vbm-auth
       dockerfile: Dockerfile      
     container_name: vbm-auth
     ports:
-      - "127.0.0.1:9010:8080"
-    <<: *common
+      - "127.0.0.1:9061:8080"
+    env_file:
+      - .env
     depends_on:
       - vbm-mongodb
+    restart: unless-stopped      
+
+  vbm-main:
+    image: darkh14/vbm_main:latest
+    build:
+      context: ./vbm-main
+      dockerfile: Dockerfile      
+    container_name: vbm-main
+    ports:
+      - "127.0.0.1:9060:8080"
+    env_file:
+      - .env
+    depends_on:
+      - vbm-mongodb
+    restart: unless-stopped
 
   vbm-mongodb:
     image: mongo:6.0.21
-    container_name: vbm-mongodb
-    <<: *common    
+    container_name: vbm-db  
     environment:
       - MONGO_DATA_DIR=/data/db
       - MONGO_LOG_DIR=/dev/null

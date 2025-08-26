@@ -14,8 +14,7 @@ from entities import TaskData, StatusResponse, ProcessingTaskResponse
 logger = logging.getLogger(__name__)
 
 
-class TaskStorage:    
-    """Управление задачами и файлами."""
+class TaskStorage:
 
     def __init__(self):
         self.tasks: Dict[str, TaskData] = {}
@@ -80,6 +79,9 @@ class TaskStorage:
 
     async def save_upload_file(self, task_id: str, filename: str, content: bytes) -> Path:
         """Сохраняет загруженный файл."""
+        if not os.path.isdir(SOURCE_FOLDER):
+            os.makedirs(SOURCE_FOLDER)
+
         folder = os.path.join(SOURCE_FOLDER, f"{task_id}")
         os.mkdir(folder)
         file_path = os.path.join(folder, f"{filename}")
@@ -120,5 +122,4 @@ class TaskStorage:
                         logger.warning(f"Failed to remove {file}: {e}")
 
 
-# Глобальный экземпляр хранилища
 task_storage = TaskStorage()

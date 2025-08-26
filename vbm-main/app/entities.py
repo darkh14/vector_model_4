@@ -53,6 +53,7 @@ class FittingIndicator(BaseModel):
     id: str
     kind: str
     outer: bool
+    use_boundaries: bool
     numbers: list[str]
     analytics: Optional[list[str]] = None
     period_shifts: Optional[list[int]] = None
@@ -64,6 +65,7 @@ class FittingParameters(BaseModel, extra='allow'):
     dimensions: list[str]
     indicators: list[FittingIndicator]
     data_filter: Optional[dict] = None
+    boundaries: Optional[dict[str, list[dict]]] = None
 
 
 class TaskData(BaseModel):
@@ -100,7 +102,8 @@ class ModelInfo(BaseModel):
     status: ModelStatuses
     fi_status: FIStatuses
     error_text: str
-    fi_error_text: str   
+    fi_error_text: str 
+    metrics: dict[str, float]  
 
 
 class FeatureImportances(BaseModel):

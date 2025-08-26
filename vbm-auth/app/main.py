@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     """Инициализация подключения к базе данных при запуске"""
     try:
         app.mongodb_client = AsyncIOMotorClient( # type: ignore
-            settings.mongodb_url,
+            settings.db_url,
             serverSelectionTimeoutMS=5000
         )
         app.mongodb = app.mongodb_client[settings.database_name] # type: ignore
@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"Database startup error: {e}")
         raise    
 
-        yield 
+    yield 
         
     try:
         """Закрытие подключения к базе данных при остановке"""

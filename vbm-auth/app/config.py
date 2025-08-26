@@ -9,7 +9,7 @@ with open('email.html', 'r', encoding='utf-8') as fp:
     EMAIL_HTML = fp.read()
 
 class Settings(BaseSettings):
-    mongodb_url: str
+    db_url: str
     database_name: str
     allowed_domains: str
     token_expiration_days: int
