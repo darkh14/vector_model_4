@@ -1,3 +1,5 @@
+version: '3.6'
+
 services:
   vbm-auth:
     image: darkh14/vbm_auth:latest
