@@ -10,7 +10,6 @@ class TokenCheck(BaseModel):
     token: str
 
 class TokenData(BaseModel):
-    email: EmailStr
     token: str
     expiration: datetime
     type: str

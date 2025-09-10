@@ -64,8 +64,8 @@ async def lifespan(app: FastAPI):
         
 
 app = FastAPI(
-    title="VBM Auth API",
-    description="API для сервиса авторизации vbm-auth",
+    title="VBM main API",
+    description="API для сервиса авторизации vbm-main",
     lifespan=lifespan,
     version=VERSION
 )

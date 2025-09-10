@@ -9,6 +9,8 @@ services:
     container_name: vbm-auth
     ports:
       - "127.0.0.1:9061:8080"
+    networks:
+      - vbm-network      
     env_file:
       - .env
     depends_on:
@@ -23,6 +25,8 @@ services:
     container_name: vbm-main
     ports:
       - "127.0.0.1:9060:8080"
+    networks:
+      - vbm-network        
     env_file:
       - .env
     depends_on:
@@ -42,7 +46,9 @@ services:
       - ./mongo/config:/data/configdb      
     ports:
       - "127.0.0.1:27217:27017"
+    networks:
+      - vbm-network        
 
 networks:
-  default:
-    name: vbm-network
+  vbm-network:
+    driver: bridge

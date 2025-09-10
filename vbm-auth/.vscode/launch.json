@@ -30,7 +30,8 @@
             "jinja": true,
             "justMyCode": false,
             "env": {
-              "TEST_MODE": "True"
+              "TEST_MODE": "True",
+              "DB_URL": "mongodb://localhost:27017"
             },
           },
     ]

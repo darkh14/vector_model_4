@@ -50,7 +50,7 @@ async def check_token(token: str = Header()) -> bool:
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
-                f"{config.AUTH_SERVICE_URL}/check-token", # type: ignore
+                f"{config.AUTH_SERVICE_URL}/check_token", # type: ignore
                 json={"token": token}
             ) as response:
                 if response.status == 200:
@@ -236,7 +236,7 @@ async def get_status(
 
     status = await task_storage.get_task_status(task_id)
 
-    return status # type: ignore
+    return status
 
 
 @router.get("/get_processing_tasks", response_model=list[ProcessingTaskResponse])
@@ -376,7 +376,7 @@ async def predict(
         token: str = Depends(get_token_from_header),
         X: list[RawDataStr] = Body()) -> list[RawDataStr]:
 
-    # try:
+    try:
         model = model_manager.get_model(model_id)
         
         if not model:
@@ -392,9 +392,9 @@ async def predict(
             result.append(RawDataStr.model_validate(row))
         return  result
     
-    # except Exception as e:
-    #     logger.error(f"Error in predicting: {e}")
-    #     raise HTTPException(status_code=500, detail=str(e))       
+    except Exception as e:
+        logger.error(f"Error in predicting: {e}")
+        raise HTTPException(status_code=500, detail=str(e))       
 
 
 @router.get("/get_model_info")

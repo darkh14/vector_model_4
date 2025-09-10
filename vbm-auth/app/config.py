@@ -1,33 +1,26 @@
 from pydantic_settings import BaseSettings
 
-VERSION = '1.0.0.0'
+VERSION = '4.1.0.1'
 
-with open('email.txt', 'r', encoding='utf-8') as fp:
-    EMAIL_TEXT = fp.read()
-
-with open('email.html', 'r', encoding='utf-8') as fp:
-    EMAIL_HTML = fp.read()
 
 class Settings(BaseSettings):
-    db_url: str
-    database_name: str
-    allowed_domains: str
-    token_expiration_days: int
-    smtp_host: str
-    smtp_port: int
-    smtp_username: str
-    smtp_password: str
-    smtp_from_email: str
-    email_text: str = EMAIL_TEXT
-    email_html: str = EMAIL_HTML
 
+    DB_URL: str = 'mongodb://localhost:27017'
+    TEST_MODE: bool = False
+
+    AUTH_DATABASE_NAME: str = 'vbm_auth'
+    TOKEN_EXPIRATION_DAYS: int = 30
+    SECRET_KEY: str = '26224616TK9T5S9HYFSQU62RZ1708XX9XKEWQUYLR00TYZ1Y25V889RZ'
+    ENCODING_ALHORYTHM: str = 'HS256'
+    AUTH_ADMIN_PASSWORD: str = 'pwd'
+    
     class Config:
+        extra = 'allow'        
         env_file = "../../.env"
-        extra = 'allow'
-        
-
 
 settings = Settings()
 
-# Преобразование строки allowed_domains в список
-settings.allowed_domains = settings.allowed_domains.split(',')
+for key, value in settings.__dict__.items():
+    if not key.startswith('_'):
+        globals()[key] = value  
+
