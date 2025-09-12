@@ -164,6 +164,10 @@ async def main_page():
     """
     return HTMLResponse('<h2>VBM auth service</h2> <br> <h3>Connection established</h3>')
 
+# Health check endpoint
+@app.get("/health")
+async def health():
+    return {"status": "OK", "version": VERSION}
 
 @app.get("/set_user")
 async def set_user(user: str,
