@@ -19,7 +19,7 @@ from keras.layers import Dense, Input
 from keras.optimizers import Adam
 import tempfile
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 import os
 from config import TEMP_FOLDER
@@ -45,6 +45,8 @@ class Model:
         self.fi_error_text = ''
         self.feature_importances = {}
         self.metrics = {}
+        self.fitting_start_date = None
+        self.fitting_date = None
 
     async def initialize(self, parameters=None):
 
@@ -82,6 +84,9 @@ class Model:
             model_bin = model_parameters['model']
             scaler_bin = model_parameters['scaler']
 
+            self.fitting_start_date = model_parameters.get('fitting_start_date')
+            self.fitting_date = model_parameters.get('fitting_date')         
+
             if model_bin:
                 ml_model = self._get_ml_model(self.model_type, self.parameters)
                 ml_model.from_binary(model_bin)
@@ -109,6 +114,7 @@ class Model:
             self.error_text = ''
             self.fi_error_text = ''
             self.fi_status = FIStatuses.NOT_CALCULATED
+            self.fitting_start_date = datetime.now(tz=timezone.utc)
 
             self.feature_importances = {}      
 
@@ -122,6 +128,7 @@ class Model:
             self.ml_model = self._get_ml_model(self.model_type, self.parameters)
             self.ml_model.fit(X, y, parameters=self.parameters)
             self.status = ModelStatuses.READY
+            self.fitting_date = datetime.now(tz=timezone.utc)            
 
             logger.info("Testing model and getting metrics. Мodel id={}".format(self.model_id))
 
@@ -137,6 +144,7 @@ class Model:
             self.status = ModelStatuses.ERROR
             self.fi_status= FIStatuses.NOT_CALCULATED
             self.error_text = str(e)
+            self.fitting_date = None             
 
             await self.write_to_db()
             raise e            
@@ -328,6 +336,9 @@ class Model:
         parameters_to_db['feature_importances'] = self.feature_importances
         parameters_to_db['metrics'] = self.metrics  
 
+        parameters_to_db['fitting_start_date'] = self.fitting_start_date
+        parameters_to_db['fitting_date'] = self.fitting_date
+
         await db_processor.insert_one('models', parameters_to_db, {'model_id': self.model_id})
 
     async def get_info(self):
@@ -352,6 +363,9 @@ class Model:
         result['error_text'] = self.error_text
         result['fi_error_text'] = self.fi_error_text 
         result['metrics'] = self.metrics
+
+        result['fitting_start_date'] = self.fitting_start_date
+        result['fitting_date'] = self.fitting_date
 
         return result
 
