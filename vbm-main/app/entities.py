@@ -20,7 +20,8 @@ class FIStatuses(Enum):
 
 class ModelTypes(Enum):
     pf = 'pf'
-    nn = 'nn'    
+    nn = 'nn' 
+    cb = 'cb'   
 
 
 class HealthResponse(BaseModel):
@@ -66,6 +67,7 @@ class FittingParameters(BaseModel, extra='allow'):
     indicators: list[FittingIndicator]
     data_filter: Optional[dict] = None
     boundaries: Optional[dict[str, list[dict]]] = None
+    use_period_number: Optional[bool] = False
 
 
 class TaskData(BaseModel):

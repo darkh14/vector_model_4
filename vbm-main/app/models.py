@@ -4,6 +4,9 @@ from data_processing import data_procesor, data_validator, convert_dates_in_db_f
 from entities import ModelStatuses, ModelTypes, FIStatuses
 from post_processing import post_processor
 from errors import AlsoCalculatingException
+import zipfile
+import json
+import shutil
 
 from sklearn.preprocessing import MinMaxScaler, PolynomialFeatures
 from sklearn.linear_model import LinearRegression
@@ -17,6 +20,9 @@ from abc import ABC, abstractmethod
 from keras.models import Sequential, load_model
 from keras.layers import Dense, Input
 from keras.optimizers import Adam
+
+from catboost import CatBoostRegressor
+
 import tempfile
 import logging
 from datetime import datetime, timezone
@@ -37,6 +43,7 @@ class Model:
         self.parameters = parameters.model_dump() if parameters else None
         self.data_filter = None
         self.ml_model = None
+        self.use_period_number = False
         self.scaler = None
         self.status = ModelStatuses.CREATED
         self.error_text = ''
@@ -60,6 +67,7 @@ class Model:
 
         if self.parameters:
             self.data_filter = self.parameters.get('data_filter')
+            self.use_period_number = self.parameters.get('use_period_number', False)            
 
         self.initialized = True
 
@@ -71,6 +79,7 @@ class Model:
             status = model_parameters.get('status') or 'CREATED'
             fi_status = model_parameters.get('fi_status') or 'NOT_CALCULATED'
             model_type = model_parameters.get('model_type')
+            self.use_period_number = model_parameters.get('use_period_number', False)             
             self.status = ModelStatuses(status)
             self.fi_status = FIStatuses(fi_status)
             self.model_type = ModelTypes(model_type) if model_type else None
@@ -166,7 +175,9 @@ class Model:
         logger.info("Predicting. Мodel id={}".format(self.model_id))
 
         y = self.ml_model.predict(X[self.parameters['x_columns']].to_numpy())
-        X[self.parameters['y_columns']] = y
+        y = pd.DataFrame(y, columns=self.parameters['y_columns'])
+        for col in self.parameters['y_columns']:
+            X[col] = y[col]
 
         logger.info("Reverse transforming result data. Мodel id={}".format(self.model_id))
         pipeline = data_procesor.fit_pipelines[self.model_id]
@@ -325,6 +336,8 @@ class Model:
         parameters_to_db['fi_status'] = self.fi_status.value        
         parameters_to_db['model_type'] = self.model_type.value if self.model_type else ''
 
+        parameters_to_db['use_period_number'] = self.use_period_number         
+
         model_bin = self.ml_model.get_binary() if self.ml_model else None
         scaler_bin = self.scaler.get_binary() if self.scaler else None
         parameters_to_db['model'] = model_bin
@@ -400,6 +413,139 @@ class Model:
 
         return {'RMSE': rmse, 'MSPE': mspe}
     
+    def save(self):
+        if self.status != ModelStatuses.READY:
+            raise ValueError('Model is not ready to be saved. Fit model before!')
+        
+        path_scaler = 'scaler_{}.mdl'.format(self.model_id)
+        path_model = 'engine_{}.mdl'.format(self.model_id)
+        path_parameters = 'parameters_{}.json'.format(self.model_id)
+
+        path_zip = 'model_{}.zip'.format(self.model_id)
+
+        model_parameters = self.parameters.copy()
+        if self.scaler:
+            with open(path_scaler, 'wb') as fp:
+                fp.write(self.scaler.get_binary())
+            model_parameters['is_scaler'] = True
+        else:
+            model_parameters['is_scaler'] = False
+
+        if self.ml_model:
+            with open(path_model, 'wb') as fp:
+                fp.write(self.ml_model.get_binary())  
+            model_parameters['is_model'] = True
+        else:
+            model_parameters['is_model'] = False
+
+        del model_parameters['model']
+        del model_parameters['scaler']
+
+        model_parameters['fitting_date'] = (model_parameters['fitting_date'].strftime('%d.%m.%Y %H:%M:%S') 
+                            if model_parameters['fitting_date'] else None)
+        model_parameters['fitting_start_date'] = (model_parameters['fitting_start_date'].strftime('%d.%m.%Y %H:%M:%S') 
+                            if model_parameters['fitting_start_date'] else None)        
+
+        with open(path_parameters, 'w', encoding='utf-8') as fp:
+            json.dump(model_parameters, fp)                       
+
+        zip_object = zipfile.ZipFile(path_zip, 'w')
+
+        zip_object.write(path_scaler, arcname='scaler.mdl', compress_type=zipfile.ZIP_DEFLATED)
+        zip_object.write(path_model, arcname='model.mdl', compress_type=zipfile.ZIP_DEFLATED)
+        zip_object.write(path_parameters, arcname='parameters.json', compress_type=zipfile.ZIP_DEFLATED)        
+
+        zip_object.close()
+
+        os.remove(path_scaler)
+        os.remove(path_model)
+        os.remove(path_parameters)        
+
+        return path_zip
+
+    def load(self, model_data, model_path):
+
+        if os.path.splitext(model_path)[1] != '.zip':
+            raise ValueError('Model file must be zip archive')
+
+        path_zip = 'model_{}.zip'.format(self.model_id)
+
+        with open(path_zip, 'wb+') as fp:
+            content = model_data.read()
+            fp.write(content)
+
+        zip_object = zipfile.ZipFile(path_zip, 'r')
+        zipped_files = [el.filename for el in zip_object.filelist]
+
+        if 'parameters.json' not in zipped_files:
+            raise ValueError('Model file must contain file parameters.json')
+
+        path_folder = 'model_{}_temp'.format(self.model_id)
+        path_scaler = os.path.join(path_folder, 'scaler.mdl')
+        path_model = os.path.join(path_folder, 'model.mdl')
+        path_paramerters = os.path.join(path_folder, 'parameters.json')
+
+        is_model = False
+        if 'model.mdl' in zipped_files:
+            is_model = True
+            zip_object.extract('model.mdl', path=path_folder)
+
+        is_scaler = False
+        if 'scaler.mdl' in zipped_files:
+            is_scaler = True
+            zip_object.extract('scaler.mdl', path=path_folder)        
+
+        zip_object.extract('parameters.json', path=path_folder)
+
+        zip_object.close()
+
+        with open(path_paramerters, 'r', encoding='utf-8') as fp:
+            model_parameters = json.load(fp)
+        
+        model_parameters['fitting_date'] = (datetime.strptime(model_parameters['fitting_date'], '%d.%m.%Y %H:%M:%S') 
+                            if model_parameters['fitting_date'] else None)
+        model_parameters['fitting_start_date'] = (datetime.strptime(model_parameters['fitting_start_date'], '%d.%m.%Y %H:%M:%S') 
+                            if model_parameters['fitting_start_date'] else None)
+        
+        self.parameters = model_parameters
+        status = model_parameters.get('status') or 'CREATED'
+        fi_status = model_parameters.get('fi_status') or 'NOT_CALCULATED'
+        model_type = model_parameters.get('model_type')
+        self.status = ModelStatuses(status)
+        self.fi_status = FIStatuses(fi_status)
+        self.model_type = ModelTypes(model_type) if model_type else None
+        self.use_period_number = model_parameters.get('use_period_number', False)         
+        self.error_text = ''
+        self.fi_error_text = ''
+
+        self.fitting_start_date = model_parameters.get('fitting_start_date')
+        self.fitting_date = model_parameters.get('fitting_date')   
+
+        self.feature_importances = model_parameters.get('feature_importances') 
+
+        self.metrics = model_parameters.get('metrics')     
+
+        if is_scaler:
+            with open(path_scaler, 'rb') as fp:
+                scaler_bin = fp.read()
+            self.scaler = Scaler(self.parameters)
+            self.scaler.from_binary(scaler_bin)
+
+            self.parameters['scaler'] = self.scaler
+        
+        if is_model:
+            with open(path_model, 'rb') as fp:
+                model_bin = fp.read()
+
+            ml_model = self._get_ml_model(self.model_type, self.parameters)
+            ml_model.from_binary(model_bin)
+            self.ml_model = ml_model            
+
+        self.write_to_db()
+
+        os.remove(path_zip)
+        shutil.rmtree(path_folder)        
+
     @staticmethod
     def _calculate_mspe(y_true: np.ndarray, y_pred: np.ndarray) -> float:
         """
@@ -478,6 +624,7 @@ class Scaler:
     def __init__(self, parameters):
         self.parameters = parameters
         self._scaler_engine = None
+        self.columns_to_scale = []
 
     def fit(self, x: pd.DataFrame,
             y: Optional[pd.DataFrame] = None):
@@ -487,8 +634,8 @@ class Scaler:
         :param y: None
         :return: self scaling object
         """
-
-        data = x[self.parameters['x_columns']]
+        self.columns_to_scale = [el for el in self.parameters['x_columns'] if el != 'period_number']
+        data = x[self.columns_to_scale]
         self._scaler_engine = MinMaxScaler()
         self._scaler_engine.fit(data)
 
@@ -500,9 +647,9 @@ class Scaler:
         :param x: data before scaling
         :return: data after scaling
         """
-
+        self.columns_to_scale = [el for el in self.parameters['x_columns'] if el != 'period_number']
         result = x.copy()
-        result[self.parameters['x_columns']] = self._scaler_engine.transform(result[self.parameters['x_columns']])
+        result[self.columns_to_scale] = self._scaler_engine.transform(result[self.columns_to_scale])
 
         return result
 
@@ -512,10 +659,10 @@ class Scaler:
         :param x: data before unscaling
         :return: data after unscaling
         """
-
+        self.columns_to_scale = [el for el in self.parameters['x_columns'] if el != 'period_number']
         result = x.copy()
 
-        result[self.parameters['x_columns']] = self._scaler_engine.inverse_transform(result[self.parameters['x_columns']])
+        result[self.columns_to_scale] = self._scaler_engine.inverse_transform(result[self.columns_to_scale])
 
         return result
 
@@ -614,6 +761,55 @@ class NNModel(MlModel):
         self.nn = load_model(file_path)
 
         os.remove(file_path)
+
+
+class CBModel(MlModel):
+    model_type = ModelTypes.cb
+    def __init__(self, parameters=None):
+        self.cb: CatBoostRegressor = None
+
+    def fit(self, X, y, parameters):
+        iterations = parameters.get('iterations') or 300
+        self.cb = self.get_cb(iterations)        
+        self.cb.fit(X, y)
+
+    def predict(self, X):
+        return self.cb.predict(X)
+
+    def get_cb(self, iterations):
+        depth = 16
+        learning_rate=1
+
+        cb = CatBoostRegressor(iterations, depth=depth, learning_rate=learning_rate)
+        return cb
+
+    def get_binary(self):
+
+        # file_id = uuid4()
+        # file_path = os.path.join(TEMP_FOLDER, '{}.cb'.format(file_id))
+        # self.cb.save_model(file_path)
+
+        # with open(file_path, mode='rb') as f:
+        #     model_bin = f.read()   
+
+        # os.remove(file_path)     
+        model_bin = pickle.dumps(self.cb)
+
+        return model_bin
+    
+    def from_binary(self, model_bin):
+
+        # file_id = uuid4()
+        # file_path = os.path.join(TEMP_FOLDER, '{}.keras'.format(file_id))
+        
+        # with open(file_path, mode='wb') as f:
+        #     f.write(model_bin)
+
+        # self.cb = CatBoostRegressor.load_model(file_path)
+
+        # os.remove(file_path)
+
+        self.cb = pickle.loads(model_bin)
 
 
 class PfModel(MlModel):

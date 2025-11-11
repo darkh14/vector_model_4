@@ -5,6 +5,7 @@ annotated-types==0.7.0
 anyio==4.9.0
 attrs==25.3.0
 cachetools==6.0.0
+catboost==1.2.8
 click==8.2.1
 colorama==0.4.6
 fastapi==0.115.12

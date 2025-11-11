@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 from pathlib import Path
 import os
 
-VERSION = '4.0.2.1'
+VERSION = '4.1.0.0'
 BASE_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 class Settings(BaseSettings):

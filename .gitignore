@@ -36,3 +36,4 @@ vbm-main/data
 # mongodb_config
 
 *.docx
+catboost_info/

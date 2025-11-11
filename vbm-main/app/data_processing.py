@@ -92,7 +92,7 @@ class DataValidator:
         for index, item in enumerate(data):
             try:
              
-                extra_fields = {k: v for k, v in item.items() if k not in model_fields or k in ['period', 'accounting_db']}
+                extra_fields = {k: v for k, v in item.items() if k not in model_fields or k in ['period', 'period_number', 'accounting_db']}
 
                 self.validate_fields(extra_fields)
 
@@ -133,6 +133,8 @@ class DataValidator:
                     fields_dict['period'] = value
             elif field == 'accounting_db':
                 pass
+            elif field == 'period_number':
+                pass            
             elif field.startswith('ind_'):
                 field_parts = field.split('_') 
                 if len(field_parts) != 2:
@@ -331,10 +333,12 @@ class RowToColumn(BaseEstimator, TransformerMixin):
             else:
                 result_data = self._add_ind_columns_to_data(result_data, data, indicator_settings, indicator_ind)
                 
-            if not self.for_predict:
-                self.parameters['x_columns'] = self.x_columns
-                self.parameters['y_columns'] = self.y_columns
-                self.parameters['columns_descriptions'] = self.columns_descriptions
+        if not self.for_predict:
+            if self.parameters.get('use_period_number') and 'period_number' not in self.x_columns:
+                self.x_columns.append('period_number')
+            self.parameters['x_columns'] = self.x_columns
+            self.parameters['y_columns'] = self.y_columns
+            self.parameters['columns_descriptions'] = self.columns_descriptions
 
         return result_data
     
@@ -497,6 +501,8 @@ class RowToColumn(BaseEstimator, TransformerMixin):
 
     def _group_data_with_dims(self, data):
         to_group = ['period'] + ['{}_id'.format(el) for el in self.parameters['dimensions']]
+        if self.parameters.get('use_period_number'):
+            to_group.append('period_number')
         grouped_data = data[to_group].groupby(to_group, as_index=False).sum()
         return grouped_data 
     

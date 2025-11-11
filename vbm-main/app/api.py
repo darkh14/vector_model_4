@@ -1,6 +1,20 @@
 import uuid
 import logging
-from fastapi import APIRouter, Header, HTTPException, BackgroundTasks, File, UploadFile, Depends, Query, Path, Body
+import os
+from fastapi import (APIRouter, 
+                     Header, 
+                     HTTPException, 
+                     BackgroundTasks, 
+                     File, 
+                     UploadFile, 
+                     Depends, 
+                     Query, 
+                     Path, 
+                     Body)
+
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
+
 from typing import Optional
 
 import config
@@ -376,25 +390,25 @@ async def predict(
         token: str = Depends(get_token_from_header),
         X: list[RawDataStr] = Body()) -> list[RawDataStr]:
 
-    try:
-        model = model_manager.get_model(model_id)
-        
-        if not model:
-            raise ValueError('Model with id "{}" is not defined'.format(model_id))
-
-        data = []
-        for row in X:
-            data.append(row.model_dump())
-
-        result_data = await model.predict(data)
-        result = []
-        for row in result_data:
-            result.append(RawDataStr.model_validate(row))
-        return  result
+    # try:
+    model = model_manager.get_model(model_id)
     
-    except Exception as e:
-        logger.error(f"Error in predicting: {e}")
-        raise HTTPException(status_code=500, detail=str(e))       
+    if not model:
+        raise ValueError('Model with id "{}" is not defined'.format(model_id))
+
+    data = []
+    for row in X:
+        data.append(row.model_dump())
+
+    result_data = await model.predict(data)
+    result = []
+    for row in result_data:
+        result.append(RawDataStr.model_validate(row))
+    return  result
+    
+    # except Exception as e:
+    #     logger.error(f"Error in predicting: {e}")
+    #     raise HTTPException(status_code=500, detail=str(e))       
 
 
 @router.get("/get_model_info")
@@ -502,3 +516,27 @@ async def get_factor_analysis(
     for row in result_data:
         data.append(FARow.model_validate(row))
     return  FAOutputData.model_validate({'data': data, 'graph': result_html})
+
+
+@router.get("/save_model")
+def save_model(model_id: str) -> FileResponse:
+
+    model = model_manager.get_model(model_id)
+    model_path = model.save()
+
+    return FileResponse(path=model_path, filename='model_{}.zip'.format(model.model_id), media_type='multipart/form-data',
+                        background=BackgroundTask(os.remove, model_path))
+
+@router.post("/load_model")
+def load_model(model_id: str, model_data: UploadFile) -> str:
+
+    model = model_manager.get_model(model_id)
+    model.load(model_data.file, model_data.filename)
+
+    return 'model loaded'
+
+
+    
+
+
+
