@@ -37,3 +37,4 @@ vbm-main/data
 
 *.docx
 catboost_info/
+models/

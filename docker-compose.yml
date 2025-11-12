@@ -29,6 +29,8 @@ services:
       - vbm-network        
     env_file:
       - .env
+    volumes:
+      - ./vbm-main/models:/vbm-main/models     
     depends_on:
       - vbm-mongodb
     restart: unless-stopped

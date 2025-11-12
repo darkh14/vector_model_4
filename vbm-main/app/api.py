@@ -1,6 +1,7 @@
 import uuid
 import logging
 import os
+import traceback
 from fastapi import (APIRouter, 
                      Header, 
                      HTTPException, 
@@ -148,10 +149,10 @@ async def process_fitting_task(task_id: str):
         logger.info(f"[{task_id}] Task marked READY")
 
     except Exception as e:
-        logger.error(f"Error processing task {task_id}: {e}")
+        logger.error(f"Error processing task {task_id}: {traceback.format_exc()}")
         logger.exception(f"[{task_id}] Error in fitting task: {e}")
 
-        await task_storage.update_task(task_id, status="ERROR", error=str(e))
+        await task_storage.update_task(task_id, status="ERROR", error=str(traceback.format_exc()))
 
 
 async def process_calculating_fi_task(task_id: str):
@@ -175,10 +176,10 @@ async def process_calculating_fi_task(task_id: str):
         logger.info(f"[{task_id}] Task marked READY")
 
     except Exception as e:
-        logger.error(f"Error processing task {task_id}: {e}")
-        logger.exception(f"[{task_id}] Error in calculating fi task: {e}")
+        logger.error(f"Error processing task {task_id}: {traceback.format_exc()}")
+        logger.exception(f"[{task_id}] Error in calculating fi task: {traceback.format_exc()}")
 
-        await task_storage.update_task(task_id, status="ERROR", error=str(e))        
+        await task_storage.update_task(task_id, status="ERROR", error=str(traceback.format_exc()))        
 
 
 async def get_token_from_header(token: Optional[str] = Header(None, alias="token")):
@@ -228,7 +229,7 @@ async def upload_data(
         return TaskResponse(task_id=uuid.UUID(task_id), message="Task processing started")
 
     except Exception as e:
-        logger.error(f"Error in uploading task {task_id}: {e}")
+        logger.error(f"Error in uploading task {task_id}: {traceback.format_exc()}")
 
         if "File name too long" in str(e):
             await task_storage.update_task(task_id, status="ERROR", error="Имя файла слишком длинное")
@@ -237,8 +238,8 @@ async def upload_data(
                 detail="Имя файла слишком длинное. Сократите имя файла и попробуйте загрузить ещё раз"
             )
         else:
-            await task_storage.update_task(task_id, status="ERROR", error=str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            await task_storage.update_task(task_id, status="ERROR", error=str(traceback.format_exc()))
+            raise HTTPException(status_code=500, detail=str(traceback.format_exc()))
 
 
 @router.get("/get_status", response_model=Optional[StatusResponse])
@@ -274,8 +275,8 @@ async def delete_data(
         await data_loader.delete_data(data_filter)
         return StatusResponse(status='READY', description='All data is deleted successfully')
     except Exception as e:
-        logger.error(f"Error in deleting data: {e}")
-        raise HTTPException(status_code=500, detail=str(e))  
+        logger.error(f"Error in deleting data: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))  
 
 
 @router.post("/get_data_count")
@@ -287,8 +288,8 @@ async def get_data_count(
         result = await data_loader.get_data_count(data_filter)
         return result
     except Exception as e:
-        logger.error(f"Error in getting data count: {e}")
-        raise HTTPException(status_code=500, detail=str(e))  
+        logger.error(f"Error in getting data count: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))  
 
 
 @router.post("/fit")
@@ -325,10 +326,10 @@ async def fit(
         return TaskResponse(task_id=uuid.UUID(task_id), message="Task processing started")
 
     except Exception as e:
-        logger.error(f"Error in fitting task {task_id}: {e}")
+        logger.error(f"Error in fitting task {task_id}: {traceback.format_exc()}")
 
-        await task_storage.update_task(task_id, status="ERROR", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))        
+        await task_storage.update_task(task_id, status="ERROR", error=str(traceback.format_exc()))
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))        
 
 
 @router.post("/calculate_fi")
@@ -358,10 +359,10 @@ async def calculate_fi(
         return TaskResponse(task_id=uuid.UUID(task_id), message="Task processing started")
 
     except Exception as e:
-        logger.error(f"Error in calculating fi task {task_id}: {e}")
+        logger.error(f"Error in calculating fi task {task_id}: {traceback.format_exc()}")
 
-        await task_storage.update_task(task_id, status="ERROR", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))       
+        await task_storage.update_task(task_id, status="ERROR", error=str(traceback.format_exc()))
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))       
 
 
 @router.get("/drop_fi")
@@ -379,8 +380,8 @@ async def drop_fi(
         
         return 'Model id={} fi dropped sucessfully'.format(model_id)
     except Exception as e:
-        logger.error(f"Error in dropping fi: {e}")
-        raise HTTPException(status_code=500, detail=str(e))  
+        logger.error(f"Error in dropping fi: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))  
 
 
 @router.post("/predict", response_model=list[RawDataStr])
@@ -390,25 +391,25 @@ async def predict(
         token: str = Depends(get_token_from_header),
         X: list[RawDataStr] = Body()) -> list[RawDataStr]:
 
-    # try:
-    model = model_manager.get_model(model_id)
-    
-    if not model:
-        raise ValueError('Model with id "{}" is not defined'.format(model_id))
+    try:
+        model = model_manager.get_model(model_id)
+        
+        if not model:
+            raise ValueError('Model with id "{}" is not defined'.format(model_id))
 
-    data = []
-    for row in X:
-        data.append(row.model_dump())
+        data = []
+        for row in X:
+            data.append(row.model_dump())
 
-    result_data = await model.predict(data)
-    result = []
-    for row in result_data:
-        result.append(RawDataStr.model_validate(row))
-    return  result
+        result_data = await model.predict(data)
+        result = []
+        for row in result_data:
+            result.append(RawDataStr.model_validate(row))
+        return  result
     
-    # except Exception as e:
-    #     logger.error(f"Error in predicting: {e}")
-    #     raise HTTPException(status_code=500, detail=str(e))       
+    except Exception as e:
+        logger.error(f"Error in predicting: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))       
 
 
 @router.get("/get_model_info")
@@ -430,8 +431,8 @@ async def get_model_info(
         
         return ModelInfo.model_validate(result)
     except Exception as e:
-        logger.error(f"Error in getting model info: {e}")
-        raise HTTPException(status_code=500, detail=str(e))  
+        logger.error(f"Error in getting model info: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))  
 
 
 @router.get("/get_feature_importances")
@@ -449,8 +450,8 @@ async def get_feature_importances(
         
         return FeatureImportances.model_validate(result)
     except Exception as e:
-        logger.error(f"Error in getting fi: {e}")
-        raise HTTPException(status_code=500, detail=str(e))  
+        logger.error(f"Error in getting fi: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))  
 
 
 @router.get("/delete_model")
@@ -464,8 +465,8 @@ async def delete_model(
         
         return 'Model id={} deleted sucessfully'.format(model_id)
     except Exception as e:
-        logger.error(f"Error in deleting model: {e}")
-        raise HTTPException(status_code=500, detail=str(e))      
+        logger.error(f"Error in deleting model: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))      
     
 
 @router.post("/get_sensitivity_analysis")
@@ -474,23 +475,26 @@ async def get_sensivity_analysis(
         authenticated: bool = Depends(check_token),
         token: str = Depends(get_token_from_header),
         sa_data: SAInputData = Body()) -> SAOutputData:
-    
-    model = model_manager.get_model(model_id)
-    if not model:
-        raise ValueError('Model with id "{}" is not defined'.format(model_id))
+    try:
+        model = model_manager.get_model(model_id)
+        if not model:
+            raise ValueError('Model with id "{}" is not defined'.format(model_id))
 
-    data_dict = sa_data.model_dump()
+        data_dict = sa_data.model_dump()
 
-    result_data, result_html = await post_processor.get_sa(model, data_dict['data'], 
-                                    data_dict['input_indicators'], 
-                                    data_dict['output_indicator'],
-                                    data_dict['deviations'],
-                                    data_dict['auto_selection_number'],
-                                    data_dict['get_graph'])
-    data = []
-    for row in result_data:
-        data.append(SARow.model_validate(row))
-    return  SAOutputData.model_validate({'data': data, 'graph': result_html})
+        result_data, result_html = await post_processor.get_sa(model, data_dict['data'], 
+                                        data_dict['input_indicators'], 
+                                        data_dict['output_indicator'],
+                                        data_dict['deviations'],
+                                        data_dict['auto_selection_number'],
+                                        data_dict['get_graph'])
+        data = []
+        for row in result_data:
+            data.append(SARow.model_validate(row))
+        return  SAOutputData.model_validate({'data': data, 'graph': result_html})
+    except Exception as e:
+        logger.error(f"Error in calculating sensitivity analysis: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))       
 
 
 @router.post("/get_factor_analysis")
@@ -499,41 +503,51 @@ async def get_factor_analysis(
         authenticated: bool = Depends(check_token),
         token: str = Depends(get_token_from_header),
         fa_data: FAInputData = Body()) -> FAOutputData:
+    try:
+        model = model_manager.get_model(model_id)
+        if not model:
+            raise ValueError('Model with id "{}" is not defined'.format(model_id))
+
+        data_dict = fa_data.model_dump()
+
+        result_data, result_html = await post_processor.get_fa(model, 
+                                        data_dict['data'], 
+                                        data_dict['scenarios'],                                    
+                                        data_dict['input_indicators'], 
+                                        data_dict['output_indicator'],
+                                        data_dict['get_graph'])
+        data = []
+        for row in result_data:
+            data.append(FARow.model_validate(row))
+        return  FAOutputData.model_validate({'data': data, 'graph': result_html})
+    except Exception as e:
+        logger.error(f"Error in calculating factor analysis: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))       
     
-    model = model_manager.get_model(model_id)
-    if not model:
-        raise ValueError('Model with id "{}" is not defined'.format(model_id))
-
-    data_dict = fa_data.model_dump()
-
-    result_data, result_html = await post_processor.get_fa(model, 
-                                    data_dict['data'], 
-                                    data_dict['scenarios'],                                    
-                                    data_dict['input_indicators'], 
-                                    data_dict['output_indicator'],
-                                    data_dict['get_graph'])
-    data = []
-    for row in result_data:
-        data.append(FARow.model_validate(row))
-    return  FAOutputData.model_validate({'data': data, 'graph': result_html})
-
 
 @router.get("/save_model")
-def save_model(model_id: str) -> FileResponse:
+async def save_model(model_id: str) -> FileResponse:
+    try:
+        model = model_manager.get_model(model_id)
+        model_path = await model.save()
 
-    model = model_manager.get_model(model_id)
-    model_path = model.save()
+        return FileResponse(path=model_path, filename='model_{}.zip'.format(model.model_id), media_type='multipart/form-data',
+                            background=BackgroundTask(os.remove, model_path))
+    except Exception as e:
+        logger.error(f"Error in saving model: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))     
 
-    return FileResponse(path=model_path, filename='model_{}.zip'.format(model.model_id), media_type='multipart/form-data',
-                        background=BackgroundTask(os.remove, model_path))
 
 @router.post("/load_model")
-def load_model(model_id: str, model_data: UploadFile) -> str:
+async def load_model(model_id: str, model_data: UploadFile) -> str:
+    try:
+        model = model_manager.get_model(model_id)
+        await model.load(model_data.file, model_data.filename)
 
-    model = model_manager.get_model(model_id)
-    model.load(model_data.file, model_data.filename)
-
-    return 'model loaded'
+        return 'model loaded'
+    except Exception as e:
+        logger.error(f"Error in loading model: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(traceback.format_exc()))       
 
 
     

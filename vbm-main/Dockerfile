@@ -1,6 +1,5 @@
 FROM python:3.11
 
-
 RUN mkdir -p /data/source
 RUN mkdir -p /data/temp
 

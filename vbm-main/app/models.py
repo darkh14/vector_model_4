@@ -54,6 +54,8 @@ class Model:
         self.metrics = {}
         self.fitting_start_date = None
         self.fitting_date = None
+        self.extra_x_predict_columns = []
+        self.model_path = '../models/{}.mdl'.format(self.model_id)
 
     async def initialize(self, parameters=None):
 
@@ -67,7 +69,8 @@ class Model:
 
         if self.parameters:
             self.data_filter = self.parameters.get('data_filter')
-            self.use_period_number = self.parameters.get('use_period_number', False)            
+            self.use_period_number = self.parameters.get('use_period_number', False)
+            self.extra_x_predict_columns = self.parameters.get('extra_x_predict_columns', [])            
 
         self.initialized = True
 
@@ -86,11 +89,23 @@ class Model:
             self.error_text = model_parameters['error_text']
             self.fi_error_text = model_parameters['fi_error_text'] 
 
+            self.extra_x_predict_columns = model_parameters.get('extra_x_predict_columns') or []
+
             self.feature_importances = model_parameters['feature_importances'] 
 
             self.metrics = model_parameters.get('metrics', {})    
+            
+            if not os.path.isdir('../models'):
+                os.mkdir('../models')
+                
+            try:
+                model_bin = model_parameters['model']
+            except Exception:
+                model_bin = None
+                if os.path.isfile(self.model_path):
+                    with open(self.model_path, 'rb') as fp:
+                        model_bin = pickle.load(fp)
 
-            model_bin = model_parameters['model']
             scaler_bin = model_parameters['scaler']
 
             self.fitting_start_date = model_parameters.get('fitting_start_date')
@@ -142,6 +157,15 @@ class Model:
             logger.info("Testing model and getting metrics. Мodel id={}".format(self.model_id))
 
             self.metrics = self._get_metrics(X_y)
+
+            if self.scaler:
+                self.parameters['scaler'] = self.scaler.get_binary()
+
+            self.parameters['model'] = self.ml_model.get_binary()
+
+            self.parameters['fitting_date'] = self.fitting_date
+            self.parameters['fitting_start_date'] = self.fitting_start_date     
+                    
             logger.info("Saving model and fitting parameters to db. Мodel id={}".format(self.model_id))
 
             await self.write_to_db()            
@@ -174,7 +198,13 @@ class Model:
 
         logger.info("Predicting. Мodel id={}".format(self.model_id))
 
-        y = self.ml_model.predict(X[self.parameters['x_columns']].to_numpy())
+        x_columns = self.parameters['x_columns']
+        if self.extra_x_predict_columns:
+            for col, from_col in self.extra_x_predict_columns:
+                X[col] = X[from_col]
+                x_columns.append(col)
+
+        y = self.ml_model.predict(X[x_columns].to_numpy())
         y = pd.DataFrame(y, columns=self.parameters['y_columns'])
         for col in self.parameters['y_columns']:
             X[col] = y[col]
@@ -340,7 +370,7 @@ class Model:
 
         model_bin = self.ml_model.get_binary() if self.ml_model else None
         scaler_bin = self.scaler.get_binary() if self.scaler else None
-        parameters_to_db['model'] = model_bin
+        # parameters_to_db['model'] = model_bin
         parameters_to_db['scaler'] = scaler_bin
 
         parameters_to_db['error_text'] = self.error_text
@@ -352,7 +382,15 @@ class Model:
         parameters_to_db['fitting_start_date'] = self.fitting_start_date
         parameters_to_db['fitting_date'] = self.fitting_date
 
+        parameters_to_db['extra_x_predict_columns'] = self.extra_x_predict_columns or None
+
         await db_processor.insert_one('models', parameters_to_db, {'model_id': self.model_id})
+
+        if not os.path.isdir('../models'):
+            os.mkdir('../models')
+
+        with open(self.model_path, 'wb') as fp:
+            pickle.dump(model_bin, fp)        
 
     async def get_info(self):
 
@@ -395,6 +433,9 @@ class Model:
         self.error_text = ''
         self.fi_error_text = ''
         self.initialized = False
+        
+        if os.path.isfile(self.model_path):
+            os.remove(self.model_path)
 
     def _get_ml_model(self, model_type, parameters):
         ml_model_classes = [el for el in MlModel.__subclasses__() if el.model_type == model_type]
@@ -413,7 +454,7 @@ class Model:
 
         return {'RMSE': rmse, 'MSPE': mspe}
     
-    def save(self):
+    async def save(self):
         if self.status != ModelStatuses.READY:
             raise ValueError('Model is not ready to be saved. Fit model before!')
         
@@ -441,10 +482,13 @@ class Model:
         del model_parameters['model']
         del model_parameters['scaler']
 
+        model_parameters['extra_x_predict_columns'] = self.extra_x_predict_columns or None        
+
         model_parameters['fitting_date'] = (model_parameters['fitting_date'].strftime('%d.%m.%Y %H:%M:%S') 
                             if model_parameters['fitting_date'] else None)
         model_parameters['fitting_start_date'] = (model_parameters['fitting_start_date'].strftime('%d.%m.%Y %H:%M:%S') 
-                            if model_parameters['fitting_start_date'] else None)        
+                            if model_parameters['fitting_start_date'] else None) 
+        model_parameters['model_type'] = self.model_type.value       
 
         with open(path_parameters, 'w', encoding='utf-8') as fp:
             json.dump(model_parameters, fp)                       
@@ -463,7 +507,7 @@ class Model:
 
         return path_zip
 
-    def load(self, model_data, model_path):
+    async def load(self, model_data, model_path):
 
         if os.path.splitext(model_path)[1] != '.zip':
             raise ValueError('Model file must be zip archive')
@@ -521,6 +565,8 @@ class Model:
         self.fitting_start_date = model_parameters.get('fitting_start_date')
         self.fitting_date = model_parameters.get('fitting_date')   
 
+        self.extra_x_predict_columns = model_parameters.get('extra_x_predict_columns', [])
+
         self.feature_importances = model_parameters.get('feature_importances') 
 
         self.metrics = model_parameters.get('metrics')     
@@ -541,7 +587,7 @@ class Model:
             ml_model.from_binary(model_bin)
             self.ml_model = ml_model            
 
-        self.write_to_db()
+        await self.write_to_db()
 
         os.remove(path_zip)
         shutil.rmtree(path_folder)        
