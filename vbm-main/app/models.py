@@ -56,6 +56,7 @@ class Model:
         self.fitting_date = None
         self.extra_x_predict_columns = []
         self.model_path = '../models/{}.mdl'.format(self.model_id)
+        self.use_scaler = True
 
     async def initialize(self, parameters=None):
 
@@ -70,7 +71,8 @@ class Model:
         if self.parameters:
             self.data_filter = self.parameters.get('data_filter')
             self.use_period_number = self.parameters.get('use_period_number', False)
-            self.extra_x_predict_columns = self.parameters.get('extra_x_predict_columns', [])            
+            self.extra_x_predict_columns = self.parameters.get('extra_x_predict_columns', []) 
+            self.use_scaler = self.parameters.get('use_scaler', False)           
 
         self.initialized = True
 
@@ -90,6 +92,7 @@ class Model:
             self.fi_error_text = model_parameters['fi_error_text'] 
 
             self.extra_x_predict_columns = model_parameters.get('extra_x_predict_columns') or []
+            self.use_scaler = model_parameters.get('use_scaler', False)
 
             self.feature_importances = model_parameters['feature_importances'] 
 
@@ -145,7 +148,7 @@ class Model:
             logger.info("Reading data from db. Мodel id={}".format(self.model_id))
             self.scaler = Scaler(self.parameters)
 
-            X_y = await data_procesor.get_dataset(self.model_id, self.scaler, self.parameters, data_filter)
+            X_y = await data_procesor.get_dataset(self.model_id, self.scaler if self.use_scaler else None, self.parameters, data_filter)
             X, y = X_y[self.parameters['x_columns']].to_numpy(), X_y[self.parameters['y_columns']].to_numpy()
 
             logger.info("Fitting model. Мodel id={}".format(self.model_id))
@@ -158,7 +161,7 @@ class Model:
 
             self.metrics = self._get_metrics(X_y)
 
-            if self.scaler:
+            if self.use_scaler and self.scaler:
                 self.parameters['scaler'] = self.scaler.get_binary()
 
             self.parameters['model'] = self.ml_model.get_binary()
@@ -194,16 +197,16 @@ class Model:
 
         descr = self.get_aux_columns_descr(X)
 
-        X = await data_procesor.transform_dataset(X, self.model_id, self.scaler, self.parameters)
+        X = await data_procesor.transform_dataset(X, self.model_id, self.scaler if self.use_scaler else None, self.parameters)
 
         logger.info("Predicting. Мodel id={}".format(self.model_id))
 
-        x_columns = self.parameters['x_columns']
+        x_columns = self.parameters['x_columns'].copy()
         if self.extra_x_predict_columns:
             for col, from_col in self.extra_x_predict_columns:
                 X[col] = X[from_col]
                 x_columns.append(col)
-
+        X[x_columns].to_json('x_scaled_1.json', orient='records')
         y = self.ml_model.predict(X[x_columns].to_numpy())
         y = pd.DataFrame(y, columns=self.parameters['y_columns'])
         for col in self.parameters['y_columns']:
@@ -381,6 +384,7 @@ class Model:
 
         parameters_to_db['fitting_start_date'] = self.fitting_start_date
         parameters_to_db['fitting_date'] = self.fitting_date
+        parameters_to_db['use_scaler'] = self.use_scaler
 
         parameters_to_db['extra_x_predict_columns'] = self.extra_x_predict_columns or None
 
@@ -390,7 +394,7 @@ class Model:
             os.mkdir('../models')
 
         with open(self.model_path, 'wb') as fp:
-            pickle.dump(model_bin, fp)        
+            pickle.dump(model_bin, fp)               
 
     async def get_info(self):
 
@@ -479,8 +483,10 @@ class Model:
         else:
             model_parameters['is_model'] = False
 
-        del model_parameters['model']
-        del model_parameters['scaler']
+        if 'model' in model_parameters:
+            del model_parameters['model']
+        if 'scaler' in model_parameters:
+            del model_parameters['scaler']
 
         model_parameters['extra_x_predict_columns'] = self.extra_x_predict_columns or None        
 
@@ -488,7 +494,11 @@ class Model:
                             if model_parameters['fitting_date'] else None)
         model_parameters['fitting_start_date'] = (model_parameters['fitting_start_date'].strftime('%d.%m.%Y %H:%M:%S') 
                             if model_parameters['fitting_start_date'] else None) 
-        model_parameters['model_type'] = self.model_type.value       
+        model_parameters['model_type'] = self.model_type.value    
+        model_parameters['status'] = self.status.value
+        model_parameters['fi_status'] = self.fi_status.value 
+
+        model_parameters['use_scaler'] = self.use_scaler           
 
         with open(path_parameters, 'w', encoding='utf-8') as fp:
             json.dump(model_parameters, fp)                       
@@ -565,6 +575,7 @@ class Model:
         self.fitting_start_date = model_parameters.get('fitting_start_date')
         self.fitting_date = model_parameters.get('fitting_date')   
 
+        self.use_scaler = model_parameters.get('use_scaler', False)   
         self.extra_x_predict_columns = model_parameters.get('extra_x_predict_columns', [])
 
         self.feature_importances = model_parameters.get('feature_importances') 
@@ -574,7 +585,8 @@ class Model:
         if is_scaler:
             with open(path_scaler, 'rb') as fp:
                 scaler_bin = fp.read()
-            self.scaler = Scaler(self.parameters)
+            if not self.scaler:
+                self.scaler = Scaler(self.parameters)
             self.scaler.from_binary(scaler_bin)
 
             self.parameters['scaler'] = self.scaler
@@ -586,7 +598,7 @@ class Model:
             ml_model = self._get_ml_model(self.model_type, self.parameters)
             ml_model.from_binary(model_bin)
             self.ml_model = ml_model            
-
+        
         await self.write_to_db()
 
         os.remove(path_zip)
@@ -672,6 +684,13 @@ class Scaler:
         self._scaler_engine = None
         self.columns_to_scale = []
 
+    def get_x_columns(self):
+        result = [el for el in self.parameters['x_columns'] if el != 'period_number']
+        if self.parameters.get('extra_x_predict_columns'):
+            result = result + [el[0] for el in self.parameters['extra_x_predict_columns']]
+
+        return result
+        
     def fit(self, x: pd.DataFrame,
             y: Optional[pd.DataFrame] = None):
         """
@@ -680,7 +699,8 @@ class Scaler:
         :param y: None
         :return: self scaling object
         """
-        self.columns_to_scale = [el for el in self.parameters['x_columns'] if el != 'period_number']
+
+        self.columns_to_scale = self.get_x_columns()
         data = x[self.columns_to_scale]
         self._scaler_engine = MinMaxScaler()
         self._scaler_engine.fit(data)
@@ -693,8 +713,13 @@ class Scaler:
         :param x: data before scaling
         :return: data after scaling
         """
-        self.columns_to_scale = [el for el in self.parameters['x_columns'] if el != 'period_number']
+        self.columns_to_scale = self.get_x_columns()
         result = x.copy()
+        prev_x_columns = list(result.columns)
+        for col in self.columns_to_scale:
+            if col not in prev_x_columns:
+                result[col] = 0
+            
         result[self.columns_to_scale] = self._scaler_engine.transform(result[self.columns_to_scale])
 
         return result
@@ -705,7 +730,7 @@ class Scaler:
         :param x: data before unscaling
         :return: data after unscaling
         """
-        self.columns_to_scale = [el for el in self.parameters['x_columns'] if el != 'period_number']
+        self.columns_to_scale = self.get_x_columns()
         result = x.copy()
 
         result[self.columns_to_scale] = self._scaler_engine.inverse_transform(result[self.columns_to_scale])

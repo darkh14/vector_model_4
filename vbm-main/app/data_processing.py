@@ -260,14 +260,15 @@ class DataProcessor:
         return X
     
     def get_fit_pipeline(self, scaler, parameters, for_predict=False):
-
-        pipeline = Pipeline([
+        pipeline_list = [
                     ('checker', Checker(parameters)),
                     ('row_column_transformer', RowToColumn(parameters)),
                     ('nan_processor', NanProcessor(parameters)),
-                    ('shuffler', Shuffler(parameters)),
-                    ('scaler', scaler),
-                    ])
+                    ('shuffler', Shuffler(parameters))
+                    ]
+        if scaler:
+            pipeline_list.append(('scaler', scaler))
+        pipeline = Pipeline(pipeline_list)
         
         return pipeline    
 
