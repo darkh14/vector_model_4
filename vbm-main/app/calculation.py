@@ -150,12 +150,15 @@ class ProcessorRec:
 
         if period < row[start_period_col] or flats_pc == 0:
             result = 0    
-        elif period == row[start_period_col]:
+        elif period == row[start_period_col] and flats_pc > 0:
             result = start_price
         else:
-            periods = min(construction_period-1, period - row[start_period_col])
+            # periods = min(construction_period-1, period - row[start_period_col])
             price_grows = ((row[price_grows_col] + 1)**(1/(construction_period-1))-1)
-            result = start_price*(1+price_grows)**periods  
+            if row['period'] >= row[start_period_col] + construction_period:
+                price_grows = 0
+            # result = start_price*(1+price_grows)**periods  
+            result = (row_prev['flats_rubm2_q{}'.format(q)] if row_prev else 0)*(1+price_grows)
 
         return result
 
