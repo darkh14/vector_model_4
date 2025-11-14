@@ -105,7 +105,7 @@ class ModelInfo(BaseModel):
     fi_status: FIStatuses
     error_text: str
     fi_error_text: str 
-    metrics: dict[str, float] 
+    metrics: Optional[dict[str, float]]
 
     fitting_start_date: Optional[datetime] 
     fitting_date: Optional[datetime] 

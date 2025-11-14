@@ -62,7 +62,7 @@ class Model:
 
         if self.initialized:
             return None
-        
+        logger.info('initialize model {}, {}'.format(self.model_id, self.model_type))
         if not self.model_type:
             await self.read_model()
         else:
@@ -100,14 +100,13 @@ class Model:
             
             if not os.path.isdir('../models'):
                 os.mkdir('../models')
-                
-            try:
-                model_bin = model_parameters['model']
-            except Exception:
-                model_bin = None
-                if os.path.isfile(self.model_path):
-                    with open(self.model_path, 'rb') as fp:
-                        model_bin = pickle.load(fp)
+            logger.info('-----Model path = {}, {}'.format(self.model_path, os.path.isfile(self.model_path)))                
+            model_bin = None
+            if os.path.isfile(self.model_path):
+                logger.info('-----Model path = {}'.format(self.model_path))
+                with open(self.model_path, 'rb') as fp:
+                    model_bin = pickle.load(fp)
+
 
             scaler_bin = model_parameters['scaler']
 
@@ -206,12 +205,10 @@ class Model:
             for col, from_col in self.extra_x_predict_columns:
                 X[col] = X[from_col]
                 x_columns.append(col)
-        X[x_columns].to_json('x_scaled_1.json', orient='records')
         y = self.ml_model.predict(X[x_columns].to_numpy())
         y = pd.DataFrame(y, columns=self.parameters['y_columns'])
         for col in self.parameters['y_columns']:
             X[col] = y[col]
-
         logger.info("Reverse transforming result data. Мodel id={}".format(self.model_id))
         pipeline = data_procesor.fit_pipelines[self.model_id]
         row_column_transformer = pipeline.named_steps['row_column_transformer']
