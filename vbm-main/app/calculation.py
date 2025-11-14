@@ -180,7 +180,7 @@ class ProcessorRec:
         nonresidental_pc_all = row['flats_pc_q{}_all_qty'.format(q)]
         nonresidental_m2_all = 2000 if q==1 else 2000
 
-        nonresidental_m2 = nonresidental_m2_all/nonresidental_pc_all
+        nonresidental_m2 = (nonresidental_m2_all/nonresidental_pc_all) if nonresidental_pc_all else 0
 
         flats_pc = row['flats_pc_q{}'.format(q)]
 
@@ -515,7 +515,10 @@ class ProcessorRec:
 
     def get_taxes_from_gross_profit(self, row, row_prev=None):
         # 315
-        result = -(
+        if (row['escrow_disclosure_sum'] + row['revenue_after_sum']) == 0:
+            result = 0
+        else:
+            result = -(
                 row['receipts_flats_sum'] +
                 row['receipts_nonresidental_sum'] +
                 row['receipts_parking_sum'] +            
@@ -1682,8 +1685,8 @@ class DirectModel:
         if not inner:
             return ['ind_0_an_0_num_1',
             'ind_0_an_1_num_1',
-            'ind_1_an_0_num_1',
-            'ind_1_an_1_num_1',
+            'ind_1_an_0_num_0',
+            'ind_1_an_1_num_0',
             'ind_2_an_0_num_1',
             'ind_2_an_1_num_1',
             'ind_2_an_2_num_1',
@@ -1730,7 +1733,6 @@ class DirectModel:
         model_dataset = self._get_model_dataset()
 
         pd_x = pd.DataFrame(X, columns=self._get_x_columns())
-
         key_bid_cols = ['ind_5_an_0_num_1',
                         'ind_5_an_1_num_1',
                         'ind_6_num_1',
@@ -1744,8 +1746,44 @@ class DirectModel:
         for col in key_bid_cols:
             pd_x[col] = pd_x[col]/100
 
+        pd_x['ind_3_an_0_num_1'] = pd_x['ind_3_an_0_num_1']/1000
+        pd_x['ind_3_an_1_num_1'] = pd_x['ind_3_an_1_num_1']/1000               
+
         to_rename = dict(zip(self._get_x_columns(), self._get_x_columns(inner=True)))
         pd_x = pd_x.rename(to_rename, axis=1)
+
+        result_list = []
+        for ind, row in pd_x.iterrows():
+            c_model_dataset = model_dataset.copy()
+            for col in self._get_x_columns(inner=True):
+                if col=='period':
+                    continue
+                c_model_dataset[col] = row[col]
+
+            cc_model_dataset = self.processor.calculate_ds(c_model_dataset)
+            results = cc_model_dataset.loc[cc_model_dataset['period'] == row['period']]['net_profit'].values
+            result = results[0] if results else 0
+            result_list.append(result*1000)
+
+        result = np.array(result_list)
+
+        if self.cb_model:
+            pd_x = pd.DataFrame(X, columns=self._get_x_columns())
+            y_cb = self.cb_model.predict(pd_x.to_numpy())
+        
+            result_df = pd.DataFrame(result, columns=['y'])
+            result_df['y_cb'] = y_cb
+
+            result_df['result'] = self.cb_ratio*result_df['y_cb'] + (1-self.cb_ratio)*result_df['y']
+
+            result = result_df['result'].to_numpy()
+
+        return result
+            
+    def predict_raw(self, X):
+        model_dataset = self._get_model_dataset()
+
+        pd_x = pd.DataFrame(X, columns=self._get_x_columns(inner=True))
 
         result_list = []
         for ind, row in pd_x.iterrows():
@@ -1762,18 +1800,4 @@ class DirectModel:
 
         result = np.array(result_list)
 
-        if self.cb_model:
-            pd_x = pd.DataFrame(X, columns=self._get_x_columns())
-            y_cb = self.cb_model.predict(pd_x.to_numpy())
-
-            print(result)
-            print(y_cb)            
-            result_df = pd.DataFrame(result, columns=['y'])
-            result_df['y_cb'] = y_cb
-
-            result_df['result'] = self.cb_ratio*result_df['y_cb'] + (1-self.cb_ratio)*result_df['y']
-
-            result = result_df['result'].to_numpy()
-
-        return result
-            
+        return result            
