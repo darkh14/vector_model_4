@@ -22,6 +22,7 @@ from keras.layers import Dense, Input
 from keras.optimizers import Adam
 
 from catboost import CatBoostRegressor
+from calculation import DirectModel
 
 import tempfile
 import logging
