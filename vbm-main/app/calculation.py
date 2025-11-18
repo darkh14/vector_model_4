@@ -1637,6 +1637,7 @@ class DirectModel:
         self.processor = ProcessorRec()
         self.cb_model = cb_model
         self.cb_ratio = cb_ratio
+        self.model_bid = False
 
     def _get_model_dataset(self):
         periods = list(range(136))
@@ -1686,30 +1687,78 @@ class DirectModel:
 
     def _get_x_columns(self, inner=False):
         if not inner:
-            return ['ind_0_an_0_num_1',
-            'ind_0_an_1_num_1',
-            'ind_1_an_0_num_0',
-            'ind_1_an_1_num_0',
-            'ind_2_an_0_num_1',
-            'ind_2_an_1_num_1',
-            'ind_2_an_2_num_1',
-            'ind_2_an_3_num_1',
-            'ind_2_an_4_num_1',
-            'ind_2_an_5_num_1',
-            'ind_3_an_0_num_1',
-            'ind_3_an_1_num_1',
-            'ind_4_num_1',
-            'ind_5_an_0_num_1',
-            'ind_5_an_1_num_1',
-            'ind_6_num_1',
-            'period_number',
-            'ind_4_num_1_1',
-            'ind_4_num_1_2',
-            'ind_4_num_1_3',
-            'ind_4_num_1_4',
-            'ind_6_num_1_1']
+            if hasattr(self, 'model_bid') and self.model_bid:
+                return ['ind_0_an_0_num_1',
+                    'ind_0_an_1_num_1',
+                    'ind_1_an_0_num_0',
+                    'ind_1_an_1_num_0',
+                    'ind_2_an_0_num_1',
+                    'ind_2_an_1_num_1',
+                    'ind_2_an_2_num_1',
+                    'ind_2_an_3_num_1',
+                    'ind_2_an_4_num_1',
+                    'ind_2_an_5_num_1',
+                    'ind_3_an_0_num_1',
+                    'ind_3_an_1_num_1',
+                    'ind_4_an_0_num_1',
+                    'ind_4_an_1_num_1',
+                    'ind_5_num_1',
+                    'ind_6_num_1',
+                    'ind_7_num_1',
+                    'ind_8_num_1',
+                    'ind_9_num_1',
+                    'ind_10_num_1',
+                    'period_number',
+                    'ind_5_num_1_1']
+            else:
+                return ['ind_0_an_0_num_1',
+                'ind_0_an_1_num_1',
+                'ind_1_an_0_num_0',
+                'ind_1_an_1_num_0',
+                'ind_2_an_0_num_1',
+                'ind_2_an_1_num_1',
+                'ind_2_an_2_num_1',
+                'ind_2_an_3_num_1',
+                'ind_2_an_4_num_1',
+                'ind_2_an_5_num_1',
+                'ind_3_an_0_num_1',
+                'ind_3_an_1_num_1',
+                'ind_4_num_1',
+                'ind_5_an_0_num_1',
+                'ind_5_an_1_num_1',
+                'ind_6_num_1',
+                'period_number',
+                'ind_4_num_1_1',
+                'ind_4_num_1_2',
+                'ind_4_num_1_3',
+                'ind_4_num_1_4',
+                'ind_6_num_1_1']
         else:
-            return ['sale_start_period_q2',
+            if hasattr(self, 'model_bid') and self.model_bid: 
+                return  ['sale_start_period_q2',
+                        'sale_start_period_q1',
+                        'temp_build_q2',
+                        'temp_build_q1',
+                        'start_price_parking_q2',
+                        'start_price_parking_q1',
+                        'start_price_nonresidental_q2',
+                        'start_price_flats_q2',
+                        'start_price_nonresidental_q1',
+                        'start_price_flats_q1',
+                        'smr_flats_pc_q2',
+                        'smr_flats_pc_q1',
+                        'price_grows_q2',
+                        'price_grows_q1',
+                        'adm_percent_q1',
+                        'key_bid_0',
+                        'key_bid_1',
+                        'key_bid_2',
+                        'key_bid_3',
+                        'key_bid_4',
+                        'period',
+                        'adm_percent_q2']
+            else:           
+                return ['sale_start_period_q2',
                     'sale_start_period_q1',
                     'temp_build_q2',
                     'temp_build_q1',
@@ -1731,12 +1780,13 @@ class DirectModel:
                     'key_bid_3',
                     'key_bid_4',
                     'adm_percent_q2']
-
+                
     def predict(self, X):
         model_dataset = self._get_model_dataset()
 
         pd_x = pd.DataFrame(X, columns=self._get_x_columns())
-        key_bid_cols = ['ind_5_an_0_num_1',
+        if not (hasattr(self, 'model_bid') and self.model_bid):
+            key_bid_cols = ['ind_5_an_0_num_1',
                         'ind_5_an_1_num_1',
                         'ind_6_num_1',
                         'ind_4_num_1',
@@ -1745,6 +1795,16 @@ class DirectModel:
                         'ind_4_num_1_3',
                         'ind_4_num_1_4',
                         'ind_6_num_1_1']
+        else:
+            key_bid_cols = ['ind_4_an_0_num_1',
+                            'ind_4_an_1_num_1',
+                            'ind_5_num_1',
+                            'ind_6_num_1',
+                            'ind_7_num_1',
+                            'ind_8_num_1',
+                            'ind_9_num_1',
+                            'ind_10_num_1',
+                            'ind_5_num_1_1']
 
         for col in key_bid_cols:
             pd_x[col] = pd_x[col]/100
@@ -1764,7 +1824,7 @@ class DirectModel:
                 c_model_dataset[col] = row[col]
 
             cc_model_dataset = self.processor.calculate_ds(c_model_dataset)
-            results = cc_model_dataset.loc[cc_model_dataset['period'] == row['period']]['net_profit'].values
+            results = cc_model_dataset.loc[cc_model_dataset['period'] == row['period']]['net_profit'].values        
             result = results[0] if results else 0
             result_list.append(result*1000)
 
@@ -1803,4 +1863,4 @@ class DirectModel:
 
         result = np.array(result_list)
 
-        return result            
+        return result   

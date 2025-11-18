@@ -206,6 +206,13 @@ class Model:
             for col, from_col in self.extra_x_predict_columns:
                 X[col] = X[from_col]
                 x_columns.append(col)
+
+        X[x_columns].to_json('X_7.json', orient='records')
+
+        if (hasattr(self.ml_model, 'cb')
+                and hasattr(self.ml_model.cb, 'model_bid') 
+                and len(self.extra_x_predict_columns) == 1):
+            self.ml_model.cb.model_bid = True
         y = self.ml_model.predict(X[x_columns].to_numpy())
         y = pd.DataFrame(y, columns=self.parameters['y_columns'])
         for col in self.parameters['y_columns']:
