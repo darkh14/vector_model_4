@@ -270,7 +270,7 @@ class ProcessorRec:
         parking_pc = row['parking_pc_q{}'.format(q)]
         result = 0
         if parking_pc:
-            result = 1500000 if q==1 else 1500000
+            result = row['start_price_parking_q1'] if q==1 else row['start_price_parking_q2']
         return result
 
     def get_income_parking(self, row, row_prev=None, q=1):
