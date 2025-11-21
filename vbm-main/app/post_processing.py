@@ -224,7 +224,6 @@ class PostProcessor:
         else:
             return [el['kind'] for el in indicators if el['id'] == value][0]
         
-
     def _sa_combine_dataset_from_base_calculated(self, dataset_base, dataset_calculated, used_indicators, current_ind=''):
         
         calc_indicators = used_indicators

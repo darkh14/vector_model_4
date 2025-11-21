@@ -207,12 +207,30 @@ class Model:
                 X[col] = X[from_col]
                 x_columns.append(col)
 
+        X[x_columns].to_json('X_8.json', orient='records')
+
         if (hasattr(self.ml_model, 'cb')
                 and hasattr(self.ml_model.cb, 'model_bid') 
                 and len(self.extra_x_predict_columns) == 1):
             self.ml_model.cb.model_bid = True
-        y = self.ml_model.predict(X[x_columns].to_numpy())
-        y = pd.DataFrame(y, columns=self.parameters['y_columns'])
+        if self.extra_x_predict_columns:
+            dims = list(X['dim_0_id'].unique())
+
+            X_y_list = []
+            for dim in dims:
+                X_y_dim = X.loc[X['dim_0_id'] == dim].copy()
+                
+                y_dim = self.ml_model.predict(X_y_dim[x_columns].to_numpy())
+                X_y_dim[self.parameters['y_columns'][0]] = y_dim
+                X_y_list.append(X_y_dim)
+            X_y = pd.concat(X_y_list, axis=0)
+            X_y = X_y.sort_index()
+
+            y = X_y[self.parameters['y_columns']]
+        else:
+            y = self.ml_model.predict(X[x_columns].to_numpy())
+            y = pd.DataFrame(y, columns=self.parameters['y_columns'])
+
         for col in self.parameters['y_columns']:
             X[col] = y[col]
         logger.info("Reverse transforming result data. Мodel id={}".format(self.model_id))

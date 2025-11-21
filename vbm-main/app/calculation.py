@@ -5,6 +5,7 @@ import numpy as np
 from datetime import datetime, timezone
 import json
 import math
+import hashlib
     
 
 class ProcessorRec:
@@ -1780,7 +1781,30 @@ class DirectModel:
                     'key_bid_3',
                     'key_bid_4',
                     'adm_percent_q2']
-                
+
+    def _get_columns_hash(self, row, columns):
+        values_list = []
+        for col in columns:
+            values_list.append(row[col])
+
+        hash_object = hashlib.md5(str(values_list).encode())
+        hex_hash = hash_object.hexdigest()
+
+        return hex_hash
+
+    def _get_batches(self, X_pd):
+        inner_columns = [el for el in self._get_x_columns(inner=True) if el != 'period']
+
+        X_pd['columns_hash'] = X_pd.apply(lambda x: self._get_columns_hash(x, columns=inner_columns), axis=1)
+
+        batches = []
+        batch_hashes = list(X_pd['columns_hash'].unique())
+        for batch_hash in batch_hashes:
+            X_batch = X_pd.loc[X_pd['columns_hash'] == batch_hash]
+            batches.append(X_batch)
+
+        return batches          
+
     def predict(self, X):
         model_dataset = self._get_model_dataset()
 
@@ -1815,20 +1839,34 @@ class DirectModel:
         to_rename = dict(zip(self._get_x_columns(), self._get_x_columns(inner=True)))
         pd_x = pd_x.rename(to_rename, axis=1)
 
-        result_list = []
-        for ind, row in pd_x.iterrows():
+        x_batches = self._get_batches(pd_x)
+
+        value_column_names = [el for el in self._get_x_columns(inner=True) if el != 'period']
+        result_batches = []
+        for x_batch in x_batches:
+            c_x_batch = x_batch.copy()
+            c_x_batch['sale_start_period_q1'] = c_x_batch['sale_start_period_q1'].astype('int')
+            c_x_batch['sale_start_period_q2'] = c_x_batch['sale_start_period_q2'].astype('int')            
+
             c_model_dataset = model_dataset.copy()
-            for col in self._get_x_columns(inner=True):
-                if col=='period':
-                    continue
-                c_model_dataset[col] = row[col]
+
+            col_values = {el: c_x_batch[el].unique()[0] for el in value_column_names}
+
+            for col_name, col_value in col_values.items():
+                c_model_dataset[col_name] = col_value
 
             cc_model_dataset = self.processor.calculate_ds(c_model_dataset)
-            results = cc_model_dataset.loc[cc_model_dataset['period'] == row['period']]['net_profit'].values        
-            result = results[0] if results else 0
-            result_list.append(result*1000)
+            c_model_dataset['net_profit'] = cc_model_dataset['net_profit']
+            c_x_batch = c_x_batch.merge(c_model_dataset[['period', 'net_profit']], on='period', how='left')
+            c_x_batch = c_x_batch.fillna(0)
+            result_batches.append(c_x_batch)
+        
+        X = pd.concat(result_batches, axis=0)
+        X = X.drop('columns_hash', axis=1)
 
-        result = np.array(result_list)
+        X = X.sort_index()
+        X['net_profit'] = X['net_profit']*1000
+        result = X['net_profit'].to_numpy()
 
         if self.cb_model:
             pd_x = pd.DataFrame(X, columns=self._get_x_columns())
