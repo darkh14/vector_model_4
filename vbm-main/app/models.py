@@ -517,7 +517,8 @@ class Model:
         model_parameters['status'] = self.status.value
         model_parameters['fi_status'] = self.fi_status.value 
 
-        model_parameters['use_scaler'] = self.use_scaler           
+        model_parameters['use_scaler'] = self.use_scaler 
+        model_parameters['feature_importances'] = self.feature_importances       
 
         with open(path_parameters, 'w', encoding='utf-8') as fp:
             json.dump(model_parameters, fp)                       
@@ -581,6 +582,7 @@ class Model:
                             if model_parameters['fitting_start_date'] else None)
         
         self.parameters = model_parameters
+
         status = model_parameters.get('status') or 'CREATED'
         fi_status = model_parameters.get('fi_status') or 'NOT_CALCULATED'
         model_type = model_parameters.get('model_type')
