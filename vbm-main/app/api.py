@@ -78,6 +78,8 @@ async def check_token(token: str = Header()) -> bool:
                 else:
                     logger.error(f"Auth service returned unexpected status {response.status}")
                     raise HTTPException(status_code=500, detail="Authentication service error")
+    except HTTPException as e:
+        raise e
 
     except asyncio.TimeoutError:
         logger.error("Auth request timed out")
