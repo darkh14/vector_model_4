@@ -39,3 +39,4 @@ vbm-main/data
 catboost_info/
 models/
 .vscode/
+vbm-main/.vscode/launch.json

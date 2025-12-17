@@ -165,7 +165,9 @@ class PostProcessor:
 
         sc_list = ['base']   
 
-        for idx, input_ind in enumerate(x_indicators):
+        other_x_indicators = [el['id'] for el in model.parameters['indicators'] if not el['outer'] and el['id'] not in x_indicators]
+
+        for idx, input_ind in enumerate(x_indicators + other_x_indicators):
 
             part_dataset = self._sa_combine_dataset_from_base_calculated(dataset_base, dataset_calculated, used_indicator_ids, input_ind)
             part_dataset['dim_0_id'] = input_ind
@@ -191,6 +193,16 @@ class PostProcessor:
 
         y_dataset = y_dataset[['dim_0_id', 'value_1', 'to_sort']].groupby(['dim_0_id', 'to_sort'], as_index=False).sum('value_1')
         y_dataset = y_dataset.sort_values('to_sort').reset_index(drop=True)
+
+        if other_x_indicators:
+            y_dataset_other = y_dataset.loc[y_dataset['dim_0_id'].isin(other_x_indicators)].copy()        
+            y_dataset_other = y_dataset_other.tail(1)
+            y_dataset_other['dim_0_id'] = 'other'
+            y_dataset_other['to_sort'] = len(x_indicators)
+            y_dataset_other['value_1'] = scenarios['calculated']['value']
+            
+            y_dataset = pd.concat([y_dataset.loc[~y_dataset['dim_0_id'].isin(other_x_indicators)], y_dataset_other], axis=0)
+
         y_dataset_2 = y_dataset.copy()
         y_dataset_2 = y_dataset_2.rename({'value_1': 'value_0'}, axis=1)
         y_dataset_2 = y_dataset_2[['to_sort', 'value_0']]
@@ -198,6 +210,7 @@ class PostProcessor:
 
         y_dataset_3 = y_dataset.loc[y_dataset['dim_0_id'] == x_indicators[-1]].copy()
         y_dataset_3['dim_0_id'] = 'calculated'
+        y_dataset_3['to_sort'] = len(x_indicators + other_x_indicators) + 1
 
         y_dataset = pd.concat([y_dataset, y_dataset_3], axis=0)
 
@@ -219,14 +232,14 @@ class PostProcessor:
         return y_dataset.to_dict(orient='records'), graph_html      
 
     def _get_fa_ind_kind(self, value, indicators):
-        if value in ['base', 'calculated']:
+        if value in ['base', 'calculated', 'other']:
             return ''
         else:
             return [el['kind'] for el in indicators if el['id'] == value][0]
         
     def _sa_combine_dataset_from_base_calculated(self, dataset_base, dataset_calculated, used_indicators, current_ind=''):
         
-        calc_indicators = used_indicators
+        calc_indicators = used_indicators.copy()
         if current_ind:
             calc_indicators.append(current_ind)
 
@@ -423,6 +436,7 @@ class GraphProcessor:
 
         indicators_dict = {el['id']: el['name'] for el in model.parameters['indicators'] if el['id'] in all_indicators}
         indicators_dict['base'] = 'Базовый'
+        indicators_dict['other'] = 'Прочие факторы'
 
         result_data['title'] = result_data['ind_id'].apply(lambda x: indicators_dict[x])
 
