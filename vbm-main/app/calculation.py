@@ -938,7 +938,7 @@ class ProcessorRec:
     def get_key_bid(self, row):
         # 0 - 2021
         # 1:4 -2022 ...
-        year = int(row['period']/4)+2022
+        year = int((row['period']-1)/4) +2022
         if year <= 2024:
             return row['key_bid_0']
         elif year == 2025:
