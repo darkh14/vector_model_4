@@ -21,7 +21,7 @@ vbm-main/data
 # model_data.tar
 # comm.txt
 
-# launch.json
+launch.json
 # vosk-model-ru-0.42.zip
 # vosk-model-ru-0.42
 # docker-compose-example.yml
