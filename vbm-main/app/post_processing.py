@@ -479,7 +479,7 @@ class GraphProcessor:
 
         x_list = list(graph_data['title'])
 
-        x_list_fa = [el[:30] + '...' if len(el) > 30 else el for el in x_list]
+        x_list_fa = [el.strip()[:50] + '...' if len(el.strip()) > 50 else el for el in x_list]
         y_list = list(graph_data['value'])
 
         text_list = []

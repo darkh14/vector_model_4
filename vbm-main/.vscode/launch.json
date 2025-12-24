@@ -19,7 +19,7 @@
             "justMyCode": false,            
             "jinja": true,
             "env": {
-                "TEST_MODE": "false",
+                "TEST_MODE": "true",
                 "DB_URL": "mongodb://localhost:27017",
                 "AUTH_SERVICE_URL": "http://localhost:9010",
             },
