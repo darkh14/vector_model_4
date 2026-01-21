@@ -204,15 +204,15 @@ class UserManager:
 
         return 'password is changed sucessfully'
 
-    async def delete_user(self, user, password, db):
+    async def delete_user(self, user, admin_password, db):
   
         existing_user = await db.users.find_one({"user": user})
         
         if not existing_user:
             raise ValueError('User "{}" not found'.format(user))
         
-        if not await self._check_user(user, password, db):
-            raise ValueError('User "{}" wrong password'.format(user))   
+        if not await self._check_user('admin', admin_password, db):
+            raise ValueError('Wrong admin password'.format(user))   
 
         await db.users.delete_one({"user": user})
 
